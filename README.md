@@ -3,10 +3,10 @@
 [![Python](https://img.shields.io/badge/Python-3.8%2B-blue.svg)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-Transform tabular data into CNN‑compatible images using **supervised feature attention** from [TabNet](https://arxiv.org/abs/2004.13621).  
+Transform tabular data into CNN‑compatible images using **supervised feature attention** from [TabNet](https://ojs.aaai.org/index.php/AAAI/article/view/16826).  
 The pipeline is fully decoupled: TabNet learns which features matter, then a deterministic layout maps them to 2D grids, and finally a lightweight CNN classifies the resulting images.
 
-![Pipeline](experiments/mol_visualization/Cancer/step_row/train_average_per_class.png)   <!-- optional, if you have an image -->
+![Pipeline](experiments/mol_visualizations/Cancer/step_row/train_average_per_class.png)   <!-- optional, if you have an image -->
 
 ---
 
@@ -24,6 +24,6 @@ The pipeline is fully decoupled: TabNet learns which features matter, then a det
 ## Installation
 
 ```bash
-git clone https://github.com/yourusername/attention-guided-t2i.git
-cd attention-guided-t2i
+git clone https://github.com/yourusername/Attention_Guided-Table2Image.git
+cd Attention_Guided-Table2Image
 pip install -r requirements.txt
