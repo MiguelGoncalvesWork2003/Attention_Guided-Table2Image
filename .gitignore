@@ -1,0 +1,26 @@
+# Data
+data/raw/
+data/processed/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Experiments & outputs
+experiments/
+tabnet_fs/outputs/
+cnn/cnn_models/
+running_all_models/results/
+running_all_models/misclassified/
+running_all_models/roc_data/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log

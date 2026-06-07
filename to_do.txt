@@ -1,0 +1,25 @@
+These are the most high-value suggestions:
+
+1 More datasets + real results
+This is the biggest issue now.
+Without extensive benchmarks, reviewers will reject immediately.
+
+3 Ablations
+Especially:
+random layout,
+no attention,
+different image sizes,
+StepSparse vs Packed.
+These are critical because your contribution is the layout itself.
+
+4 Real figures
+Necessary.
+Especially the attention heatmaps and layout comparison.
+
+5 Research hypothesis
+Excellent suggestion.
+Your paper becomes much stronger if framed as:
+“Does supervised attention produce better spatial layouts than unsupervised heuristics?”
+
+6 Open-source code
+Very important for credibility
