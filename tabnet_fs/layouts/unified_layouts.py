@@ -18,6 +18,8 @@ Classes:
     importance, maximising spatial locality for CNNs.
   - `StepSparseLayout` – allocates a fixed number of columns per step,
     preserving empty slots for interpretability.
+  - `AttentionMapLayout` – preserves the full soft attention distribution,
+    creating an image where rows are steps and columns are features.
 
 Factory functions (`create_layout`, `create_layout_from_config`) enable
 instantiation by name, facilitating integration with the Streamlit interface
@@ -29,10 +31,10 @@ to be “CNN‑agnostic” – they specify only the spatial layout, leaving the
 image generation and CNN training to separate modules.
 
 Relation to the paper:
-  The three layout strategies correspond to the AG‑T2I‑S, AG‑T2I‑G, and
-  AG‑T2I‑P variants evaluated in the experimental section. This module
-  therefore provides the exact implementations used in the empirical comparison,
-  enabling full reproducibility.
+  The five layout strategies correspond to the AG‑T2I‑StepRow, AG‑T2I‑StepSparse,
+  AG‑T2I‑PackedRow, AG‑T2I‑PackedCol, and AG‑T2I‑AttentionMap variants evaluated
+  in the experimental section. This module therefore provides the exact
+  implementations used in the empirical comparison, enabling full reproducibility.
 """
 
 import numpy as np

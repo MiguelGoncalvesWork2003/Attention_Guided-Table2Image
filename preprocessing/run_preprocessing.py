@@ -1,17 +1,12 @@
+# run_preprocessing.py
 """
 Entry point for headless preprocessing execution.
 
 This script is invoked by the Streamlit orchestrator (via subprocess) to
 run the full preprocessing pipeline outside the UI thread. It loads the
 configuration from environment variables (set by the Streamlit form), loads
-the raw dataset, executes the preprocessing, and then persists the cleaned
-data as CSV and NumPy arrays.
-
-If the environment variable `USE_CUSTOM_SPLIT` is `"true"`, the script expects
-`TRAIN_IDX_PATH` and `TEST_IDX_PATH` pointing to .npy files containing pre‑defined
-sample indices. In that case the preprocessing pipeline is fitted on the training
-set and applied to the test set without internal random splitting, enabling
-cross‑validation or any externally defined split.
+the raw dataset, executes `run_preprocessing_pipeline()`, and then persists
+the cleaned data as CSV and NumPy arrays.
 
 The script prints detailed progress information to stdout, which can be
 captured and displayed in the Streamlit logs, and exits with a non‑zero

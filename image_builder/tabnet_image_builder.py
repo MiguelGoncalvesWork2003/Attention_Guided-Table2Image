@@ -1,6 +1,7 @@
 #tabnet_image_builder.py
 """
-Tabular‑to‑image projection (the **deterministic feature-to-image projection** stage of the attention-guided tabular-to-image framework).
+Tabular‑to‑image projection (the **deterministic feature-to-image projection**
+stage of the attention-guided tabular-to-image framework).
 
 This script is the central implementation of the attention‑guided
 tabular‑to‑image transformation described in Section 4 of the paper.
@@ -14,12 +15,13 @@ Workflow:
   2. Apply an importance cutoff (default 0.005) to discard features with
      negligible attention; this step prevents noise pixels from diluting
      the image signal.
-  3. Instantiate a layout strategy (`step_row`, `packed`, or `step_sparse`)
-     via the unified layout interface. The layout defines the image
-     dimensions and the mapping from each feature to a pixel coordinate.
-  4. For every sample, place the feature value at the assigned (row, col)
-     location, producing a single‑channel grayscale image of shape
-     `(C=1, H, W)`.
+  3. Instantiate a layout strategy (`step_row`, `packed`, `step_sparse`,
+     `attention_map`, etc.) via the unified layout interface. The layout
+     defines the image dimensions and the mapping from each feature to a
+     pixel coordinate.
+  4. For every sample, place the feature value (or the attention‑importance
+     product) at the assigned (row, col) location, producing a single‑channel
+     grayscale image of shape `(C=1, H, W)`.
   5. Save the resulting image arrays (`X_train_img.npy`, `X_test_img.npy`)
      and a JSON metadata file that records the layout geometry, step groups,
      and feature ordering.

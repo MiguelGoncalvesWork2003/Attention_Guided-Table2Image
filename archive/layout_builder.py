@@ -3,8 +3,9 @@
 Deterministic spatial layout builder for attention‑guided tabular‑to‑image
 representations.
 
-This module implements the **Map** stage of the MOL paradigm: it converts the
-frozen TabNet step assignments and feature importance scores into concrete
+This module implements the **deterministic feature-to-image projection** stage
+of the attention-guided tabular-to-image framework: it converts the frozen
+TabNet step assignments and feature importance scores into concrete
 two‑dimensional grid layouts. Once produced, these layouts serve as the fixed
 canvas onto which individual tabular samples are projected to form
 CNN‑compatible images.

@@ -1,5 +1,4 @@
 #api.py
-#!/usr/bin/env python3
 """
 Simplified command‑line and Python API for the full Attention‑Guided
 Tabular‑to‑Image pipeline (Map‑Optimize‑Learn).
@@ -40,7 +39,8 @@ How it fits in the Map–Optimize–Learn philosophy
 - **Learn:** Launches `train_cnn.py` and `evaluate_cnn.py` to train the
   CNN on the fixed image representations and compute final metrics.
 - **Interpretability:** Automatically invokes `mol_visualizations.py` to
-  generate the qualitative plots used in the paper.
+  generate the qualitative plots used in the paper (visualisations of the
+  AG‑T2I representations).
 
 The script also enables the hyperparameter studies that informed the
 experimental protocol (Section 5) by allowing systematic exploration of
@@ -57,13 +57,13 @@ configuration without re‑running the entire pipeline.
 Usage
 -----
     # Single run
-    python pipeline_api.py run breast_cancer --target diagnosis --layout step_row --seed 42
+    python api.py run breast_cancer --target diagnosis --layout step_row --seed 42
 
     # Random search
-    python pipeline_api.py random breast_cancer --target diagnosis --trials 50 --jobs 4
+    python api.py random breast_cancer --target diagnosis --trials 50 --jobs 4
 
     # Bayesian optimisation
-    python pipeline_api.py bayesian breast_cancer --target diagnosis --trials 50
+    python api.py bayesian breast_cancer --target diagnosis --trials 50
 """
 
 import os

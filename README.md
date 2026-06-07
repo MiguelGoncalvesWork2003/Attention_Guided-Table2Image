@@ -176,11 +176,11 @@ All hyperparameters, seeds, and configurations are recorded in the output files.
 If you use this code or build upon the ideas in our paper, please cite:
 
 ```bibtex
-@article{bourgingoncalves2025attention,
+@article{bourgingoncalves2026agt2i,
   title={Attention-Guided Tabular-to-Image Representations for Deep Learning},
-  author={Bourgin Gon{\c{c}}alves, Miguel and Dutra, In{\^e}s},
+  author={Bourgin Gonçalves, Miguel and Dutra, Inês},
   journal={Preprint (under review)},
-  year={2025},
+  year={2026},
   note={Available at https://github.com/MiguelGoncalvesWork2003/Attention_Guided-Table2Image}
 }
 ```

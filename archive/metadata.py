@@ -10,7 +10,7 @@ metrics, and summaries as part of its output directory). The dataclasses
 `TabNetConfig` and `TabNetResults`, along with `TabNetExperimentLogger`,
 are not imported or instantiated anywhere in the execution pipeline.
 
-Retained for reference and possible standalone experiments; safe to archive.
+Retained for reference and possible standalone experiments.
 """
 
 import json

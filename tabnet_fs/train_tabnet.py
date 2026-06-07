@@ -2,11 +2,11 @@
 """
 TabNet training script for the attention-guided tabular-to-image framework.
 
-This script implements the **supervised attention learning stage** stage of the proposed attention-guided
-tabular-to-image transformation: it trains an interpretable TabNet model to
-learn supervised, task-specific feature attention. The resulting sparse masks
-serve as the single source of truth for all subsequent deterministic spatial
-layouts.
+This script implements the **supervised attention learning stage** of the proposed
+attention-guided tabular-to-image transformation: it trains an interpretable
+TabNet model to learn supervised, task-specific feature attention. The resulting
+sparse masks serve as the single source of truth for all subsequent deterministic
+spatial layouts.
 
 Key design choices:
   - Only authentic, gradient-based feature attention is used – no synthetic or

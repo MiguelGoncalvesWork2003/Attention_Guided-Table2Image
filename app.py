@@ -2,17 +2,17 @@
 """
 Attention‑Guided Tabular‑to‑Image Pipeline – Interactive Dashboard.
 
-Streamlit application for the deterministic attention-guided tabular-to-image framework described
-in the paper. It provides a fully interactive, zero‑code interface to execute
-every stage of the pipeline, from raw data inspection to trained CNN
-evaluation and interpretable visualisations.
+Streamlit application for the deterministic attention-guided tabular-to-image
+framework described in the paper. It provides a fully interactive, zero‑code
+interface to execute every stage of the pipeline, from raw data inspection to
+trained CNN evaluation and interpretable visualisations.
 
 The dashboard functions as an **orchestration layer** that mirrors exactly
-the logic of the command‑line API (`pipeline_api.py`), but presents results
-in real time and enables exploratory analysis of layout strategies and
-hyperparameters. All heavy computation is delegated to the dedicated
-execution modules via `execution.runner.run_step()`, ensuring that the
-dashboard, the CLI, and the paper’s experiments share the same code base.
+the logic of the command‑line API (`api.py`), but presents results in real
+time and enables exploratory analysis of layout strategies and hyperparameters.
+All heavy computation is delegated to the dedicated execution modules via
+`execution.runner.run_step()`, ensuring that the dashboard, the CLI, and the
+paper’s experiments share the same code base.
 
 **Phases of the interactive workflow:**
 
@@ -23,8 +23,9 @@ dashboard, the CLI, and the paper’s experiments share the same code base.
      parameters (missing imputation, scaling, encoding).
 
 2. **Pipeline Execution (Phase 3 – Map, Optimize, Learn)**
-   - Choose a spatial layout strategy (`step_row`, `packed`, `step_sparse`)
-     that defines how TabNet’s attention structure is projected to 2D.
+   - Choose a spatial layout strategy (`step_row`, `packed`, `packed_T`,
+     `step_sparse`, `attention_map`) that defines how TabNet’s attention
+     structure is projected to 2D.
    - Adjust TabNet hyperparameters (number of steps, attention dimension,
      sparsity, learning rate, etc.) directly in the UI.
    - Execute the full end‑to‑end pipeline with a single click:
@@ -32,7 +33,7 @@ dashboard, the CLI, and the paper’s experiments share the same code base.
        * **Optimize:** `train_tabnet.py` (attention‑guided layout derivation)
        * **Learn:** `train_cnn.py` → `evaluate_cnn.py` (CNN training & test)
    - Optionally reuse existing preprocessing and TabNet outputs to speed up
-     layout comparisons, while CNN models and MOL visualisations are always
+     layout comparisons, while CNN models and visualisations are always
      regenerated for fairness.
 
 3. **Results & Visualisations (Step 7)**
@@ -40,7 +41,7 @@ dashboard, the CLI, and the paper’s experiments share the same code base.
      classification report – all computed by `evaluate_cnn.py` and loaded
      from the standard JSON results file.
    - Confusion matrix rendered as a Seaborn heatmap.
-   - MOL image grids (per class, train & test) showing actual pixel
+   - AG‑T2I image grids (per class, train & test) showing the actual pixel
      representations produced by the layout.
    - TabNet feature‑step assignment table with per‑step feature groups.
    - Download buttons for processed data, metrics, confusion matrices, and
@@ -50,7 +51,7 @@ dashboard, the CLI, and the paper’s experiments share the same code base.
 - **No model or metric computation** inside the dashboard – it only
   coordinates existing scripts and displays their outputs.
 - **Full compatibility** with the `SimplePipelineAPI`; any run from the
-  dashboard is reproducible via `python pipeline_api.py run`.
+  dashboard is reproducible via `python api.py run`.
 - **Stateful session management** ensures that dataset, target column,
   layout, and parameter choices persist across UI re‑renders.
 

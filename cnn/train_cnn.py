@@ -1,8 +1,10 @@
+# train_cnn.py
 """
 CNN training script for attention‑guided tabular‑to‑image representations.
 
-This script implements the **CNN learning stage** of the attention-guided tabular-to-image framework: it trains a convolutional neural network on the image
-representations previously produced by a deterministic, attention‑guided
+This script implements the **CNN learning stage** of the attention-guided
+tabular-to-image framework: it trains a convolutional neural network on the
+image representations previously produced by a deterministic, attention‑guided
 layout. The training process is fully decoupled from both the TabNet
 feature‑attention model and the layout builder.
 
@@ -18,8 +20,8 @@ Key properties:
   - Saves the best model checkpoint (based on validation accuracy) together
     with a JSON configuration file that records all hyperparameters and
     the final image shape.
-  - After training, computes extended training‑set metrics using the shared
-    evaluation module and saves them for later comparison with test metrics.
+  - After training, computes extended training‑set metrics and saves them
+    for later comparison with test metrics.
 
 The script expects the image arrays to be 4D `(N, C, H, W)`, where `C=1`
 (single‑channel grayscale images). This format is the direct output of the

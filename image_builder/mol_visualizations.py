@@ -3,7 +3,7 @@
 Visual diagnostics for attention‑guided tabular‑to‑image representations.
 
 This script generates a comprehensive set of interpretability plots that
-qualitatively assess the quality of the MOL image representations and the
+qualitatively assess the quality of the generated image representations and the
 spatial structure induced by the learned attention. It produces exactly the
 kind of visualisations referenced in Sections 5 and 6 of the paper.
 
@@ -39,6 +39,10 @@ navigation.
   - Together with the interactive Streamlit tool, the visualisations support
     the paper’s argument that supervised, model‑aware spatialisation yields
     transparent and analysable representations.
+
+(Note: the script retains the historical filename `mol_visualizations.py`,
+but its purpose is to visualise the AG‑T2I representations described in the
+paper.)
 """
 
 import json

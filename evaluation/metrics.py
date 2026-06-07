@@ -1,3 +1,4 @@
+# metrics.py
 """
 Metrics computation module for the attention-guided tabular-to-image framework.
 
@@ -7,14 +8,11 @@ presentation logic (e.g., Streamlit UI), ensuring that all evaluation code is
 centralised, testable, and reproducible.
 
 Key functions:
-  - `compute_classification_metrics`: Computes accuracy, balanced accuracy,
-    macro precision/recall/F1, Cohen’s kappa, confusion matrix, and a full
-    classification report. For binary problems, it optionally computes ROC-AUC
-    and ROC curve data.
-  - `format_metrics_for_display`: Converts the raw metrics dictionary into
-    human-readable percentage/string values suitable for UI or paper tables.
-  - `save_metrics_to_json`: Serialises the metrics dictionary to JSON,
-    automatically handling numpy array conversion.
+  - `compute_extended_metrics`: Computes accuracy, balanced accuracy, macro
+    and weighted precision/recall/F1, and optionally ROC‑AUC from class
+    probabilities.
+  - `get_wrong_cases`: Returns a DataFrame of misclassified samples with
+    original indices and decoded labels for detailed inspection.
 
 **Role in the Map–Optimize–Learn pipeline:**
   - **Learn:** After training the CNN classifier on the image representations,

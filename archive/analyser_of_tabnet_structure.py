@@ -23,7 +23,7 @@ All outputs are strictly derived from the saved artefacts, guaranteeing
 reproducibility and full traceability.
 
 Usage:
-  python build_tabnet_structure.py <dataset> --visualize
+  python analyser_of_tabnet_structure.py <dataset> --visualize
 
 Relation to the paper:
   The structural metrics and visualisations serve as qualitative evidence that

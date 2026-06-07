@@ -1,3 +1,4 @@
+# evaluate_cnn.py
 """
 CNN evaluation script — the single authority for computing and saving
 classification metrics on the test set.
@@ -5,9 +6,8 @@ classification metrics on the test set.
 This script loads a trained `TabNetCNN` model (from a checkpoint produced
 by `train_cnn.py`) and evaluates it on the held‑out test images. It
 computes a comprehensive set of metrics using the centralised
-`evaluation.metrics` module (extended with precision, recall, weighted
-variants, and ROC‑AUC) and saves all results in a structured format
-for both programmatic consumption and the Streamlit UI.
+`running_all_models.metrics` module and saves all results in a structured
+format for both programmatic consumption and the Streamlit UI.
 
 Workflow:
   1. Load the CNN configuration JSON (image shape, hyperparameters) and
@@ -16,15 +16,13 @@ Workflow:
      and normalise labels to 0‑based indexing.
   3. Perform batched inference with `torch.no_grad()` to obtain predicted
      classes and class probabilities.
-  4. Call `compute_extended_metrics` from the shared benchmark metrics
-     module to produce accuracy, balanced accuracy, macro/weighted
-     precision/recall/F1, and ROC‑AUC.
-  5. Also compute Cohen’s kappa, confusion matrix, and classification
-     report for compatibility.
-  6. Save the full metrics dictionary as JSON, and also export the raw
+  4. Call `compute_extended_metrics` to produce accuracy, balanced
+     accuracy, macro/weighted precision/recall/F1, Cohen’s kappa, confusion
+     matrix, classification report, and (for binary problems) ROC‑AUC.
+  5. Save the full metrics dictionary as JSON, and also export the raw
      predictions, probabilities, confusion matrix, and classification
-     report as separate files.
-  7. Print a summary table for quick inspection.
+     report as separate files for downstream analysis.
+  6. Print a summary table for quick inspection.
 
 **Role in the Map–Optimize–Learn pipeline:**
   - Constitutes the **evaluation** sub‑stage of **Learn**, delivering the

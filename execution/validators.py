@@ -16,8 +16,8 @@ Functions are organised by pipeline stage:
   - `check_cnn_outputs`: Confirms that the image arrays (`X_train_img.npy`,
     `X_test_img.npy`) are saved, that the CNN model file exists, and that the
     image data has the expected shape `(N, 1, H, W)`.
-  - `check_mol_outputs`: Checks that MOL visualisation directories contain at
-    least some grid and instance PNG images.
+  - `check_mol_outputs`: Checks that the generated image visualisation
+    directories contain at least some grid and instance PNG images.
   - `check_layout_outputs`: Specialised check for layout‑specific outputs
     (image arrays and layout metadata JSON).
   - `validate_dataset_structure`: Runs all checks for a given dataset, returning
