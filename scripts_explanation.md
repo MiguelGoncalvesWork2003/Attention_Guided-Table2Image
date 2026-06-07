@@ -4,7 +4,7 @@ This document describes every important Python module in the repository.
 The pipeline follows the **Map‑Optimize‑Learn** philosophy:
 
 * **Map** – Preprocessing and projection of tabular features into 2D images.  
-* **Optimize** – TabNet training that learns supervised feature attention.  
+* **Optimize** – TabNet's supervised feature attention.  
 * **Learn** – CNN training and evaluation on the generated images.  
 
 Each script’s place in this flow is clearly indicated, so you can see exactly
@@ -20,9 +20,9 @@ Creates a deterministic `PreprocessingConfig` from UI choices or environment
 variables.  
 Captures feature removal, imputation, encoding, scaling, and split settings.  
 
-- **Map** – defines the transformation that turns raw data into the numeric
+- Defines the transformation that turns raw data into the numeric
   tensor used by TabNet.  
-- **Optimize** – replaces heuristic decisions with inspectable, data‑driven
+- Replaces heuristic decisions with inspectable, data‑driven
   rules.
 
 ### `preprocessing/pipeline.py`
@@ -32,7 +32,7 @@ scaling) to the raw dataset, producing clean NumPy arrays.
 
 - Fitted exclusively on training data to prevent leakage.  
 - Saves every fitted transformer and metadata for perfect reproducibility.  
-- **Map** – delivers the standardised tabular input for TabNet.
+- Delivers the standardised tabular input for TabNet.
 
 ### `preprocessing/transform.py`
 **Fittable, serialisable transformers.**  
@@ -40,7 +40,7 @@ Atomic scikit‑learn‑style steps: `ColumnSelector`, `HighMissingDropper`,
 `SmartImputer`, `CategoricalEncoder`, `FeatureScaler`, `TargetLabelEncoder`.  
 
 - Each transformer can be pickled and reloaded.  
-- **Map** – the building blocks that keep preprocessing transparent and
+- The building blocks that keep preprocessing transparent and
   auditable.
 
 ### `preprocessing/run_preprocessing.py`
@@ -114,7 +114,7 @@ dimensions.
 
 - Three branches (small/medium/large) based on pixel count.  
 - Shared across all tabular‑to‑image baselines for fair comparison.  
-- **Learn** – the supervised model that receives the fixed AG‑T2I images.
+- The supervised model that receives the fixed AG‑T2I images.
 
 ### `cnn/train_cnn.py`
 **CNN training script.**  
@@ -122,7 +122,7 @@ Trains the `TabNetCNN` on the generated images using fixed hyperparameters and
 a `ReduceLROnPlateau` scheduler.  
 
 - Also computes and saves training‑set metrics for over‑fitting analysis.  
-- **Learn** – performs the final supervised learning step.
+- Performs the final supervised learning step.
 
 ### `cnn/evaluate_cnn.py`
 **CNN evaluation script.**  
@@ -132,7 +132,7 @@ using the shared `running_all_models.metrics`.
 
 - Exports predictions, probabilities, confusion matrix, and classification
   report.  
-- **Learn** (evaluation) – the single source of truth for all CNN performance
+- The single source of truth for all CNN performance
   numbers.
 
 ---
