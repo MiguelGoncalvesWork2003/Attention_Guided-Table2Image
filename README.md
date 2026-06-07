@@ -6,7 +6,7 @@
 Transform tabular data into CNN‑compatible images using **supervised feature attention** from [TabNet](https://ojs.aaai.org/index.php/AAAI/article/view/16826).  
 The pipeline is fully decoupled: TabNet learns which features matter, then a deterministic layout maps them to 2D grids, and finally a lightweight CNN classifies the resulting images.
 
-![Pipeline](experiments/mol_visualizations/Cancer/step_row/train_average_per_class.png)   <!-- optional, if you have an image -->
+![Pipeline](figures/train_average_per_class.png)
 
 ---
 
