@@ -29,12 +29,14 @@ def compute_extended_metrics(y_true, y_pred, y_proba=None):
         "f1_weighted": f1_score(y_true, y_pred, average="weighted", zero_division=0),
     }
     if y_proba is not None:
-        # multiclass ROC‑AUC: one‑vs‑rest
         try:
-            metrics["roc_auc"] = roc_auc_score(
-                y_true, y_proba, multi_class="ovr", average="macro"
-            )
-        except ValueError:
+            if len(np.unique(y_true)) > 1:
+                metrics["roc_auc"] = roc_auc_score(
+                    y_true, y_proba, multi_class="ovr", average="macro"
+                )
+            else:
+                metrics["roc_auc"] = np.nan
+        except Exception:
             metrics["roc_auc"] = np.nan
     return metrics
 

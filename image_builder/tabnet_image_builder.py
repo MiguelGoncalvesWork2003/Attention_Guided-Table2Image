@@ -173,25 +173,40 @@ def build_layout_images(
     if layout.name == "attention_map":
         weight_matrix = layout.get_weight_matrix()
 
-        # Allocate array for raw (unscaled) images
+        # --------------------------------------------------
+        # Robust feature clipping parameters (training only)
+        # --------------------------------------------------
+        if build_layout_images.is_training:
+            build_layout_images.q01 = np.percentile(X, 1, axis=0)
+            build_layout_images.q99 = np.percentile(X, 99, axis=0)
+
+        q01 = build_layout_images.q01
+        q99 = build_layout_images.q99
+
+        X_robust = np.clip(X, q01, q99)
+
         raw = np.empty((n_samples, height, width), dtype=np.float32)
+
         for i in range(n_samples):
-            sample_vec = X[i, :].astype(np.float32)
+            sample_vec = X_robust[i].astype(np.float32)
             raw[i] = weight_matrix * sample_vec
 
-        # Compute global min/max (using the training set's raw values)
+        # --------------------------------------------------
+        # Robust image scaling (training statistics only)
+        # --------------------------------------------------
         if build_layout_images.is_training:
-            # Store scaling parameters as function attributes
-            build_layout_images.global_min = raw.min()
-            build_layout_images.global_max = raw.max()
-        global_min = build_layout_images.global_min
-        global_max = build_layout_images.global_max
+            build_layout_images.img_q01 = np.percentile(raw, 1)
+            build_layout_images.img_q99 = np.percentile(raw, 99)
 
-        # Scale to [0,1]
-        if global_max > global_min:
-            images[:, 0, :, :] = (raw - global_min) / (global_max - global_min + 1e-8)
-        else:
-            images[:, 0, :, :] = 0.0
+        img_q01 = build_layout_images.img_q01
+        img_q99 = build_layout_images.img_q99
+
+        raw = np.clip(raw, img_q01, img_q99)
+
+        images[:, 0] = (
+            raw - img_q01
+        ) / (img_q99 - img_q01 + 1e-8)
+
         return images
 
     if layout.name in ("packed", "packed_T"):
