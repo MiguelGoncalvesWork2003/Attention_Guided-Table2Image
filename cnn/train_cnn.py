@@ -211,9 +211,13 @@ for epoch in range(EPOCHS):
         print(f"  -> New best model saved (val_acc={best_val_acc:.4f})")
 
 # ------------------------------------------------------------
-# Evaluate on training set and save metrics
+# Evaluate on training set using the BEST model (not the final state)
 # ------------------------------------------------------------
+# Reload the best checkpoint
+checkpoint = torch.load(MODEL_PATH, map_location=device)
+model.load_state_dict(checkpoint["model_state_dict"])
 model.eval()
+
 all_preds = []
 all_labels = []
 with torch.no_grad():

@@ -37,11 +37,17 @@ N_SPLITS = 5
 SEEDS = [0, 1, 2, 3, 4]
 
 DATASETS = [
-    #("Diabetes", "Class"),
-    #("Cancer", "Class"),
-    #("Glass", "Class"),
-    ("Card", "Class")
-    #("Thyroid", "Class")
+    ("Diabetes", "Class"),
+    ("Cancer", "Class"),
+    ("Glass", "Class")#,
+    #("Card", "Class"),
+    #("Thyroid", "Class"),
+    #("Heart", "Class"),
+    #("Horse", "Class"),
+    #("Gene", "Class"),
+    #("Soybean", "Class"),
+    #("Poker_Hand", "Class"),
+    #("Forest_Cover_Type", "Class"),
 ]
 
 # ------------------------------------------------------------
