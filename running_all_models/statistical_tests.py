@@ -16,7 +16,7 @@ This script:
 
 Expected raw CSV format:
 -------------------------------------------------
-model | seed | fold | accuracy | macro_f1 | ...
+model | seed | fold | roc_auc | macro_f1 | ...
 -------------------------------------------------
 """
 
@@ -36,7 +36,7 @@ from statsmodels.stats.multitest import multipletests
 RESULTS_DIR = Path(__file__).resolve().parent / "results"
 
 ALPHA = 0.05
-METRIC = "accuracy"  # or "macro_f1"
+METRIC = "roc_auc"  # or "accuracy" or "macro_f1"
 
 # ============================================================
 # 1. Load benchmark results
@@ -71,6 +71,10 @@ def load_all_results(results_dir: Path, metric: str) -> pd.DataFrame:
         if metric not in df.columns:
             print(f"[WARNING] Metric '{metric}' not found in {csv_file.name}")
             continue
+
+        # --- FIX: ensure numeric and drop invalid rows ---
+        df[metric] = pd.to_numeric(df[metric], errors="coerce")
+        df = df.dropna(subset=[metric])
 
         dataset_name = csv_file.stem.replace("_raw", "")
 
@@ -194,26 +198,15 @@ def pairwise_tests(matrix: pd.DataFrame, alpha: float = 0.05) -> pd.DataFrame:
 
 
 # ============================================================
-# 3. Friedman + Nemenyi
+# 3. Friedman + Nemenyi (manual implementation)
 # ============================================================
 
 def friedman_nemenyi(matrix: pd.DataFrame, alpha: float = 0.05):
     """
-    Perform Friedman test and Nemenyi post-hoc test.
+    Perform Friedman test and Nemenyi post-hoc test (manual implementation).
     """
-
-    try:
-        import scikit_posthocs as sp
-    except ImportError:
-        print(
-            "\n[WARNING] scikit-posthocs not installed.\n"
-            "Install with:\n"
-            "pip install scikit-posthocs"
-        )
-        return None
-
     # Keep only datasets with complete model results
-    pivot = matrix.dropna()
+    pivot = matrix.dropna().copy()
 
     if pivot.shape[0] < 3:
         print("\n[WARNING] Friedman test requires at least 3 datasets.")
@@ -222,7 +215,6 @@ def friedman_nemenyi(matrix: pd.DataFrame, alpha: float = 0.05):
     # --------------------------------------------------------
     # Friedman test
     # --------------------------------------------------------
-
     friedman_stat, friedman_p = stats.friedmanchisquare(
         *[pivot[col].values for col in pivot.columns]
     )
@@ -230,7 +222,6 @@ def friedman_nemenyi(matrix: pd.DataFrame, alpha: float = 0.05):
     print("\n" + "=" * 60)
     print("FRIEDMAN TEST")
     print("=" * 60)
-
     print(f"Statistic : {friedman_stat:.6f}")
     print(f"P-value   : {friedman_p:.6f}")
 
@@ -239,29 +230,48 @@ def friedman_nemenyi(matrix: pd.DataFrame, alpha: float = 0.05):
         return None
 
     print("\nSignificant difference detected.")
-    print("Running Nemenyi post-hoc analysis...")
+    print("Running Nemenyi post-hoc analysis (manual)...")
 
     # --------------------------------------------------------
-    # Nemenyi post-hoc
+    # Manual Nemenyi test
     # --------------------------------------------------------
+    k = pivot.shape[1]          # number of models
+    N = pivot.shape[0]          # number of datasets
 
-    melted = (
-        pivot.reset_index()
-        .melt(
-            id_vars="dataset",
-            var_name="model",
-            value_name="value"
-        )
-    )
+    # 1. Rank performances within each dataset (lower rank = better)
+    #    We use axis=1 to rank across models for each dataset.
+    #    Method='average' handles ties correctly.
+    ranked = pivot.rank(axis=1, method='average', ascending=False)
 
-    nemenyi = sp.posthoc_nemenyi_friedman(
-        melted,
-        y_col="value",
-        group_col="model",
-        block_col="dataset"
-    )
+    # 2. Average rank for each model
+    avg_ranks = ranked.mean(axis=0).sort_values(ascending=False)
 
-    return nemenyi
+    # 3. Critical difference (CD) for Nemenyi test
+    from scipy.stats import studentized_range
+    q_alpha = studentized_range.ppf(1 - alpha, k, np.inf)  # infinite df for asymptotic
+    cd = q_alpha * np.sqrt(k * (k + 1) / (6 * N))
+
+    print(f"\nCritical difference (alpha={alpha}): {cd:.4f}")
+    print("\nAverage ranks per model:")
+    for model, rank in avg_ranks.items():
+        print(f"  {model:30s} : {rank:.4f}")
+
+    # 4. Pairwise comparison: difference in average ranks
+    models = avg_ranks.index.tolist()
+    pvals_matrix = pd.DataFrame(np.ones((k, k)), index=models, columns=models)
+
+    se = np.sqrt(k * (k + 1) / (6 * N))
+    for i, m1 in enumerate(models):
+        for j, m2 in enumerate(models):
+            if i >= j:
+                continue
+            diff = abs(avg_ranks[m1] - avg_ranks[m2])
+            q_obs = diff / se
+            p_val = 1 - studentized_range.cdf(q_obs, k, np.inf)
+            pvals_matrix.loc[m1, m2] = p_val
+            pvals_matrix.loc[m2, m1] = p_val
+
+    return pvals_matrix
 
 
 # ============================================================
@@ -369,14 +379,14 @@ def main():
     print("\nModels:")
     print(matrix.columns.tolist())
 
-    print("\nPerformance matrix:")
+    print("\nPerformance matrix (ROC‑AUC):")
     print(matrix.round(4))
 
-    performance_matrix_csv = output_dir / f"performance_matrix.csv"
-    performance_matrix_tex = output_dir / f"performance_matrix.tex"
+    performance_matrix_csv = output_dir / f"performance_matrix_{METRIC}.csv"
+    performance_matrix_tex = output_dir / f"performance_matrix_{METRIC}.tex"
 
     matrix.to_csv(performance_matrix_csv)
-    matrix.to_latex(performance_matrix_tex, float_format="%.4f",index=True)
+    matrix.to_latex(performance_matrix_tex, float_format="%.4f", index=True)
 
     if matrix.shape[1] < 2:
         print("\nNeed at least two models.")
@@ -388,7 +398,7 @@ def main():
 
     df_pairs = pairwise_tests(matrix, ALPHA)
 
-    display_pairwise(df_pairs, METRIC)
+    display_pairwise(df_pairs, METRIC.upper())
 
     # ========================================================
     # Friedman + Nemenyi
@@ -397,11 +407,9 @@ def main():
     nemenyi_df = friedman_nemenyi(matrix, ALPHA)
 
     if nemenyi_df is not None:
-
         print("\n" + "=" * 60)
-        print("NEMENYI POST-HOC MATRIX")
+        print("NEMENYI POST-HOC MATRIX (p-values)")
         print("=" * 60)
-
         print(nemenyi_df.round(4))
 
     # ========================================================

@@ -37,17 +37,17 @@ N_SPLITS = 5
 SEEDS = [0, 1, 2, 3, 4]
 
 DATASETS = [
-    #("Diabetes", "Class"),
-    #("Cancer", "Class"),
-    #("Glass", "Class"),
-    #("Card", "Class"),
-    #("Thyroid", "Class"),
+    ("Diabetes", "Class"),
+    ("Cancer", "Class"),
+    ("Glass", "Class"),
+    ("Card", "Class"),
+    ("Thyroid", "Class"),
     ("Heart", "Class"),
     ("Horse", "Class"),
     ("Gene", "Class"),
     ("Soybean", "Class"),
-    #("Poker_Hand", "Class"),
-    #("Forest_Cover_Type", "Class"),
+    ("Poker_Hand", "Class"),
+    ("Forest_Cover_Type", "Class"),
 ]
 
 # ------------------------------------------------------------
@@ -281,7 +281,7 @@ def run_dataset_benchmark(dataset_name, target_col):
             continue
         for metric in ["accuracy", "balanced_accuracy", "precision_macro", "recall_macro",
                        "f1_macro", "precision_weighted", "recall_weighted", "f1_weighted", "roc_auc"]:
-            if metric in sub.columns:
+            if metric in sub.columns and sub[metric].notna().any():
                 mean_val, std_val, ci_val = mean_std_ci(sub[metric].dropna())
                 summary.append({
                     "model": model,
