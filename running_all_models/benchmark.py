@@ -46,6 +46,10 @@ DATASETS = [
     ("Horse", "Class"),
     ("Gene", "Class"),
     ("Soybean", "Class"),
+    ("Adult", "Class"),
+    ("Bank", "Class"),
+    ("Electricity", "Class"),
+    ("Magic04", "Class"),
     ("Poker_Hand", "Class"),
     ("Forest_Cover_Type", "Class"),
 ]

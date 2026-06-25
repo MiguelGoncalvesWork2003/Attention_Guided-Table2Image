@@ -1,5 +1,5 @@
 # Data
-data/raw/
+data/splits/
 data/processed/
 
 # Python cache
