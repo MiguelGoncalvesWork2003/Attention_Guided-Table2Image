@@ -73,6 +73,7 @@ The complete pipeline includes:
 ├── image_builder/                 # Image generation layouts
 ├── cnn/                           # CNN architecture and training
 ├── running_all_models/
+│   ├── benchmark.py               # Benchmark
 │   ├── benchmark_parallel.py      # Parallel benchmark
 │   ├── hyperparameter_search.py   # Hyperparameter optimization
 │   ├── models_factory.py
@@ -136,6 +137,20 @@ The dashboard allows visual inspection of:
 - generated layouts
 - feature importance
 - generated images
+
+---
+
+### Run the benchmark (all baselines + AG-T2I variants)
+
+```bash
+python running_all_models/benchmark.py
+```
+
+Results are saved in:
+
+```text
+running_all_models/results/
+```
 
 ---
 
