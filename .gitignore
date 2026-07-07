@@ -11,7 +11,7 @@ __pycache__/
 .ipynb_checkpoints/
 
 # Experiments & outputs
-experiments/
+experiments/hyperparameter_search
 tabnet_fs/outputs/
 cnn/cnn_models/
 #running_all_models/results/
@@ -30,4 +30,4 @@ to_do.txt
 to_csv.py
 debug.py
 catboost_info
-cache
+cache/
