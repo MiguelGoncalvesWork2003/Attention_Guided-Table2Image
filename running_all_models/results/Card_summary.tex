@@ -1,0 +1,99 @@
+\begin{tabular}{llrrrr}
+\toprule
+model & metric & mean & std & ci95 & time_sec \\
+\midrule
+XGBoost & accuracy & 0.8652 & 0.0159 & 0.0062 & 0.1541 \\
+XGBoost & balanced_accuracy & 0.8636 & 0.0193 & 0.0075 & 0.1541 \\
+XGBoost & precision_macro & 0.8659 & 0.0151 & 0.0059 & 0.1541 \\
+XGBoost & recall_macro & 0.8636 & 0.0193 & 0.0075 & 0.1541 \\
+XGBoost & f1_macro & 0.8632 & 0.0172 & 0.0068 & 0.1541 \\
+XGBoost & precision_weighted & 0.8677 & 0.0164 & 0.0064 & 0.1541 \\
+XGBoost & recall_weighted & 0.8652 & 0.0159 & 0.0062 & 0.1541 \\
+XGBoost & f1_weighted & 0.8649 & 0.0164 & 0.0064 & 0.1541 \\
+XGBoost & roc_auc & 0.9226 & 0.0149 & 0.0059 & 0.1541 \\
+LightGBM & accuracy & 0.8652 & 0.0075 & 0.0030 & 0.2901 \\
+LightGBM & balanced_accuracy & 0.8629 & 0.0132 & 0.0052 & 0.2901 \\
+LightGBM & precision_macro & 0.8677 & 0.0053 & 0.0021 & 0.2901 \\
+LightGBM & recall_macro & 0.8629 & 0.0132 & 0.0052 & 0.2901 \\
+LightGBM & f1_macro & 0.8629 & 0.0094 & 0.0037 & 0.2901 \\
+LightGBM & precision_weighted & 0.8688 & 0.0077 & 0.0030 & 0.2901 \\
+LightGBM & recall_weighted & 0.8652 & 0.0075 & 0.0030 & 0.2901 \\
+LightGBM & f1_weighted & 0.8647 & 0.0085 & 0.0033 & 0.2901 \\
+LightGBM & roc_auc & 0.9285 & 0.0142 & 0.0056 & 0.2901 \\
+CatBoost & accuracy & 0.8681 & 0.0249 & 0.0098 & 0.3034 \\
+CatBoost & balanced_accuracy & 0.8669 & 0.0239 & 0.0094 & 0.3034 \\
+CatBoost & precision_macro & 0.8686 & 0.0261 & 0.0102 & 0.3034 \\
+CatBoost & recall_macro & 0.8669 & 0.0239 & 0.0094 & 0.3034 \\
+CatBoost & f1_macro & 0.8665 & 0.0249 & 0.0098 & 0.3034 \\
+CatBoost & precision_weighted & 0.8704 & 0.0243 & 0.0095 & 0.3034 \\
+CatBoost & recall_weighted & 0.8681 & 0.0249 & 0.0098 & 0.3034 \\
+CatBoost & f1_weighted & 0.8680 & 0.0247 & 0.0097 & 0.3034 \\
+CatBoost & roc_auc & 0.9361 & 0.0138 & 0.0054 & 0.3034 \\
+TabNet & accuracy & 0.8812 & 0.0191 & 0.0075 & 54.6358 \\
+TabNet & balanced_accuracy & 0.8820 & 0.0198 & 0.0078 & 54.6358 \\
+TabNet & precision_macro & 0.8833 & 0.0215 & 0.0084 & 54.6358 \\
+TabNet & recall_macro & 0.8820 & 0.0198 & 0.0078 & 54.6358 \\
+TabNet & f1_macro & 0.8799 & 0.0193 & 0.0076 & 54.6358 \\
+TabNet & precision_weighted & 0.8865 & 0.0212 & 0.0083 & 54.6358 \\
+TabNet & recall_weighted & 0.8812 & 0.0191 & 0.0075 & 54.6358 \\
+TabNet & f1_weighted & 0.8811 & 0.0190 & 0.0074 & 54.6358 \\
+TabNet & roc_auc & 0.9104 & 0.0218 & 0.0086 & 54.6358 \\
+FT-Transformer (lite) & accuracy & 0.8478 & 0.0224 & 0.0088 & 45.8915 \\
+FT-Transformer (lite) & balanced_accuracy & 0.8445 & 0.0238 & 0.0093 & 45.8915 \\
+FT-Transformer (lite) & precision_macro & 0.8491 & 0.0240 & 0.0094 & 45.8915 \\
+FT-Transformer (lite) & recall_macro & 0.8445 & 0.0238 & 0.0093 & 45.8915 \\
+FT-Transformer (lite) & f1_macro & 0.8452 & 0.0231 & 0.0091 & 45.8915 \\
+FT-Transformer (lite) & precision_weighted & 0.8499 & 0.0236 & 0.0093 & 45.8915 \\
+FT-Transformer (lite) & recall_weighted & 0.8478 & 0.0224 & 0.0088 & 45.8915 \\
+FT-Transformer (lite) & f1_weighted & 0.8473 & 0.0225 & 0.0088 & 45.8915 \\
+FT-Transformer (lite) & roc_auc & 0.8835 & 0.0346 & 0.0136 & 45.8915 \\
+IGTD-inspired & accuracy & 0.8377 & 0.0464 & 0.0182 & 10.5893 \\
+IGTD-inspired & balanced_accuracy & 0.8388 & 0.0432 & 0.0169 & 10.5893 \\
+IGTD-inspired & precision_macro & 0.8489 & 0.0349 & 0.0137 & 10.5893 \\
+IGTD-inspired & recall_macro & 0.8388 & 0.0432 & 0.0169 & 10.5893 \\
+IGTD-inspired & f1_macro & 0.8348 & 0.0472 & 0.0185 & 10.5893 \\
+IGTD-inspired & precision_weighted & 0.8525 & 0.0311 & 0.0122 & 10.5893 \\
+IGTD-inspired & recall_weighted & 0.8377 & 0.0464 & 0.0182 & 10.5893 \\
+IGTD-inspired & f1_weighted & 0.8361 & 0.0478 & 0.0187 & 10.5893 \\
+IGTD-inspired & roc_auc & 0.9006 & 0.0187 & 0.0073 & 10.5893 \\
+Naive Reshape & accuracy & 0.8159 & 0.0346 & 0.0135 & 9.8630 \\
+Naive Reshape & balanced_accuracy & 0.8138 & 0.0380 & 0.0149 & 9.8630 \\
+Naive Reshape & precision_macro & 0.8372 & 0.0236 & 0.0092 & 9.8630 \\
+Naive Reshape & recall_macro & 0.8138 & 0.0380 & 0.0149 & 9.8630 \\
+Naive Reshape & f1_macro & 0.8098 & 0.0383 & 0.0150 & 9.8630 \\
+Naive Reshape & precision_weighted & 0.8391 & 0.0223 & 0.0087 & 9.8630 \\
+Naive Reshape & recall_weighted & 0.8159 & 0.0346 & 0.0135 & 9.8630 \\
+Naive Reshape & f1_weighted & 0.8122 & 0.0374 & 0.0146 & 9.8630 \\
+Naive Reshape & roc_auc & 0.9124 & 0.0293 & 0.0115 & 9.8630 \\
+AG-T2I-step_row & accuracy & 0.8310 & 0.0658 & 0.0258 & 82.6896 \\
+AG-T2I-step_row & balanced_accuracy & 0.8299 & 0.0743 & 0.0291 & 82.6896 \\
+AG-T2I-step_row & precision_macro & 0.8344 & 0.0609 & 0.0239 & 82.6896 \\
+AG-T2I-step_row & recall_macro & 0.8299 & 0.0743 & 0.0291 & 82.6896 \\
+AG-T2I-step_row & f1_macro & 0.8261 & 0.0768 & 0.0301 & 82.6896 \\
+AG-T2I-step_row & roc_auc & 0.8888 & 0.0695 & 0.0273 & 82.6896 \\
+AG-T2I-packed & accuracy & 0.7986 & 0.0757 & 0.0297 & 79.2030 \\
+AG-T2I-packed & balanced_accuracy & 0.7949 & 0.0846 & 0.0332 & 79.2030 \\
+AG-T2I-packed & precision_macro & 0.8008 & 0.0791 & 0.0310 & 79.2030 \\
+AG-T2I-packed & recall_macro & 0.7949 & 0.0846 & 0.0332 & 79.2030 \\
+AG-T2I-packed & f1_macro & 0.7915 & 0.0886 & 0.0347 & 79.2030 \\
+AG-T2I-packed & roc_auc & 0.8533 & 0.0792 & 0.0310 & 79.2030 \\
+AG-T2I-packed_T & accuracy & 0.8012 & 0.0687 & 0.0269 & 79.4819 \\
+AG-T2I-packed_T & balanced_accuracy & 0.7959 & 0.0786 & 0.0308 & 79.4819 \\
+AG-T2I-packed_T & precision_macro & 0.8053 & 0.0725 & 0.0284 & 79.4819 \\
+AG-T2I-packed_T & recall_macro & 0.7959 & 0.0786 & 0.0308 & 79.4819 \\
+AG-T2I-packed_T & f1_macro & 0.7932 & 0.0827 & 0.0324 & 79.4819 \\
+AG-T2I-packed_T & roc_auc & 0.8525 & 0.0784 & 0.0307 & 79.4819 \\
+AG-T2I-step_sparse & accuracy & 0.8354 & 0.0594 & 0.0233 & 79.8607 \\
+AG-T2I-step_sparse & balanced_accuracy & 0.8352 & 0.0656 & 0.0257 & 79.8607 \\
+AG-T2I-step_sparse & precision_macro & 0.8380 & 0.0598 & 0.0234 & 79.8607 \\
+AG-T2I-step_sparse & recall_macro & 0.8352 & 0.0656 & 0.0257 & 79.8607 \\
+AG-T2I-step_sparse & f1_macro & 0.8323 & 0.0640 & 0.0251 & 79.8607 \\
+AG-T2I-step_sparse & roc_auc & 0.8887 & 0.0699 & 0.0274 & 79.8607 \\
+AG-T2I-attention_map & accuracy & 0.7664 & 0.1335 & 0.0523 & 83.3868 \\
+AG-T2I-attention_map & balanced_accuracy & 0.7652 & 0.1322 & 0.0518 & 83.3868 \\
+AG-T2I-attention_map & precision_macro & 0.7531 & 0.2031 & 0.0796 & 83.3868 \\
+AG-T2I-attention_map & recall_macro & 0.7652 & 0.1322 & 0.0518 & 83.3868 \\
+AG-T2I-attention_map & f1_macro & 0.7373 & 0.1840 & 0.0721 & 83.3868 \\
+AG-T2I-attention_map & roc_auc & 0.8796 & 0.0622 & 0.0244 & 83.3868 \\
+\bottomrule
+\end{tabular}

@@ -739,8 +739,8 @@ if st.session_state.get('pipeline_run', False):
             success, output, metadata = run_step(
                 name="Preprocessing",
                 script_path=PREPROCESS_DIR / "run_preprocessing.py",
-                env_vars=os.environ.copy(),
-                timeout=600
+                env_vars=os.environ.copy()#,
+                #timeout=600
             )
             
             if success:
@@ -776,8 +776,8 @@ if st.session_state.get('pipeline_run', False):
             success, output, metadata = run_step(
                 name="TabNet Training",
                 script_path=TABNET_DIR / "train_tabnet.py",
-                env_vars=os.environ.copy(),
-                timeout=900
+                env_vars=os.environ.copy()#,
+                #timeout=900
             )
             
             if success:
@@ -824,8 +824,8 @@ if st.session_state.get('pipeline_run', False):
             success, output, metadata = run_step(
                 name="Image Building",
                 script_path=IMAGE_DIR / "tabnet_image_builder.py",
-                env_vars=os.environ.copy(),
-                timeout=300
+                env_vars=os.environ.copy()#,
+                #timeout=300
             )
             
             if success:
@@ -858,8 +858,8 @@ if st.session_state.get('pipeline_run', False):
         success, output, metadata = run_step(
             name="CNN Training",
             script_path=CNN_DIR / "train_cnn.py",
-            env_vars=os.environ.copy(),
-            timeout=600
+            env_vars=os.environ.copy()#,
+            #timeout=600
         )
         
         if success:
@@ -892,8 +892,8 @@ if st.session_state.get('pipeline_run', False):
         success, output, metadata = run_step(
             name="CNN Evaluation",
             script_path=CNN_DIR / "evaluate_cnn.py",
-            env_vars=os.environ.copy(),
-            timeout=300
+            env_vars=os.environ.copy()#,
+            #timeout=300
         )
         
         if success:
@@ -925,8 +925,8 @@ if st.session_state.get('pipeline_run', False):
         success, output, metadata = run_step(
             name="MOL Visualization",
             script_path=IMAGE_DIR / "mol_visualizations.py",
-            env_vars=os.environ.copy(),
-            timeout=300
+            env_vars=os.environ.copy()#,
+            #timeout=300
         )
         
         if success:

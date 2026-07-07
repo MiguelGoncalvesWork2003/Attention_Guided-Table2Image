@@ -89,7 +89,7 @@ def run_step(
     name: str,
     script_path: Path,
     env_vars: Optional[Dict[str, str]] = None,
-    timeout: int = 300,
+    #timeout: int = 300,
     check_returncode: bool = True
 ) -> Tuple[bool, str, Optional[Dict]]:
     """
@@ -126,8 +126,8 @@ def run_step(
             env=env,
             capture_output=True,
             text=True,
-            encoding='utf-8',
-            timeout=timeout
+            encoding='utf-8'#,
+            #timeout=timeout
         )
         
         # Prepare metadata
@@ -163,11 +163,11 @@ def run_step(
             raise PipelineStepError(error_msg) from e
         return False, error_msg, {'returncode': e.returncode}
         
-    except subprocess.TimeoutExpired:
-        error_msg = f"✗ {name} timed out after {timeout} seconds"
-        if check_returncode:
-            raise PipelineStepError(error_msg)
-        return False, error_msg, {'timeout': True}
+    #except subprocess.TimeoutExpired:
+    #    error_msg = f"✗ {name} timed out after {timeout} seconds"
+    #    if check_returncode:
+    #        raise PipelineStepError(error_msg)
+    #    return False, error_msg, {'timeout': True}
         
     except Exception as e:
         error_msg = f"✗ {name} failed with unexpected error: {str(e)}\n"
@@ -197,7 +197,7 @@ def run_multiple_steps(
             name=step_config.get('name', 'Unnamed Step'),
             script_path=step_config['script_path'],
             env_vars=step_config.get('env_vars'),
-            timeout=step_config.get('timeout', 300),
+            #timeout=step_config.get('timeout', 300),
             check_returncode=stop_on_error
         )
         

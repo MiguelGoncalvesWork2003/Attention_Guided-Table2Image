@@ -339,8 +339,8 @@ class SimplePipelineAPI:
         success, output, _ = run_step(
             name="Preprocessing",
             script_path=self.preprocess_dir / "run_preprocessing.py",
-            env_vars=env,
-            timeout=600
+            env_vars=env#,
+            #timeout=600
         )
         if not success:
             error_msg = output[:500] if output else "Preprocessing failed"
@@ -354,8 +354,8 @@ class SimplePipelineAPI:
         success, output, _ = run_step(
             name="TabNet Training",
             script_path=self.tabnet_dir / "train_tabnet.py",
-            env_vars=env,
-            timeout=900
+            env_vars=env#,
+            #timeout=900
         )
         if not success:
             error_msg = output[:500] if output else "TabNet training failed"
@@ -369,8 +369,8 @@ class SimplePipelineAPI:
         success, output, _ = run_step(
             name="Image Building",
             script_path=self.image_dir / "tabnet_image_builder.py",
-            env_vars=env,
-            timeout=300
+            env_vars=env#,
+            #timeout=300
         )
         if not success:
             error_msg = output[:500] if output else "Image building failed"
@@ -384,8 +384,8 @@ class SimplePipelineAPI:
         success, output, _ = run_step(
             name="CNN Training",
             script_path=self.cnn_dir / "train_cnn.py",
-            env_vars=env,
-            timeout=600
+            env_vars=env#,
+            #timeout=600
         )
         if not success:
             error_msg = output[:500] if output else "CNN training failed"
@@ -399,8 +399,8 @@ class SimplePipelineAPI:
         success, output, _ = run_step(
             name="CNN Evaluation",
             script_path=self.cnn_dir / "evaluate_cnn.py",
-            env_vars=env,
-            timeout=300
+            env_vars=env#,
+            #timeout=300
         )
         if not success:
             error_msg = output[:500] if output else "CNN evaluation failed"
@@ -415,8 +415,8 @@ class SimplePipelineAPI:
             run_step(
                 name="MOL Visualization",
                 script_path=self.image_dir / "mol_visualizations.py",
-                env_vars=env,
-                timeout=300
+                env_vars=env#,
+                #timeout=300
             )
         except Exception as e:
             if not quiet:
