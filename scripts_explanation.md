@@ -291,8 +291,10 @@ all five AG‑T2I variants across multiple seeds and folds *in parallel*.
 **Usage:**  
 ```bash
 python running_all_models/benchmark_parallel.py [--dataset Cancer] [--workers 8]
+```
 
-running_all_models/hyperparameter_search.py
+### `running_all_models/hyperparameter_search.py`
+
 Per‑model hyperparameter tuning with 3‑fold CV.
 Performs a systematic search for the best hyperparameters of every model
 in the benchmark. To ensure a fair comparison, all models use exactly the
@@ -313,6 +315,7 @@ final evaluation with tuned parameters.
 **Usage:**  
 ```bash
 python running_all_models/hyperparameter_search.py Cancer --target Class --agt2i_trials 20
+```
 
 ---
 ## Archive (historical / auxiliary)
