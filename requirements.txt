@@ -16,6 +16,9 @@ scipy>=1.7.0              # required by scikit-learn metrics
 # ------------------------------
 torch>=1.9.0              # PyTorch (no strict upper bound, works with 2.x)
 pytorch-tabnet>=4.0.0     # TabNet classifier (official PyTorch implementation)
+xgboost
+lightgbm
+catboost
 
 # ------------------------------
 # Interactive dashboard & visualization

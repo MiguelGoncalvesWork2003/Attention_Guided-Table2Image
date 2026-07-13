@@ -1,16 +1,21 @@
 """
-Hyperparameter search for all models (baseline + AG‑T2I).
-- Tree models & MLP: RandomizedSearchCV with publication‑informed grids.
-- TabNet & FT-Transformer: manual random search (sklearn‑compatible wrapper).
-- AG‑T2I: per‑layout search via your existing api.py (random method by default).
-Results saved to running_all_models/hyperparameter_results/<dataset>_best_params.json
+Hyperparameter search for all models (baseline + AG‑T2I) – parallel version.
+- CPU models: parallel across workers (joblib)
+- GPU models: sequential to avoid contention on a single GPU
+- Results saved to running_all_models/hyperparameter_results/<dataset>_best_params.json
 """
+
+# --- Limit threading inside each worker (must be set before importing sklearn) ---
+import os
+os.environ["OMP_NUM_THREADS"] = "1"
+os.environ["MKL_NUM_THREADS"] = "1"
+os.environ["OPENBLAS_NUM_THREADS"] = "1"
+os.environ["NUMEXPR_NUM_THREADS"] = "1"
 
 import sys
 import json
 import time
 import copy
-import itertools
 import warnings
 import numpy as np
 import pandas as pd
@@ -27,8 +32,7 @@ from sklearn.model_selection import (
 from sklearn.preprocessing import LabelEncoder, StandardScaler
 from sklearn.impute import SimpleImputer
 from sklearn.metrics import accuracy_score
-from sklearn.base import clone
-from joblib import Parallel, delayed
+from joblib import Parallel, delayed, parallel_backend
 
 from api import SimplePipelineAPI
 from running_all_models.models_factory import get_models
@@ -39,8 +43,8 @@ warnings.filterwarnings("ignore")
 # ------------------------------------------------------------
 # Configuration
 # ------------------------------------------------------------
-SEARCH_CV = 3          # inner CV for baseline models (tree/MLP)
-N_ITER = 20            # random parameter combinations for each baseline model
+SEARCH_CV = 3          # inner CV for tree/MLP models
+N_ITER = 20            # random parameter combinations for each model
 SEED = 42
 VAL_SIZE = 0.2         # validation split for neural models (TabNet, FT‑Transformer)
 RESULTS_DIR = PROJECT_ROOT / "running_all_models" / "hyperparameter_results"
@@ -49,6 +53,12 @@ RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 # AG‑T2I search settings
 AGT2I_TRIALS_PER_LAYOUT = 20   # number of trials per layout
 AGT2I_METHOD = "random"        # "random" or "bayesian"
+
+# GPU models that should run sequentially (single GPU)
+GPU_MODELS = {
+    "TabNet",
+    "FT-Transformer (lite)",
+}
 
 # ------------------------------------------------------------
 # Publication‑informed parameter grids
@@ -97,11 +107,11 @@ PARAM_GRIDS = {
 }
 
 # ------------------------------------------------------------
-# Manual search for TabNet (pytorch_tabnet) & FT‑Transformer
+# Manual search grids for TabNet & FT‑Transformer
 # ------------------------------------------------------------
 TABNET_SEARCH_GRID = {
-    "n_d": [8, 16, 32, 64],          # feature embedding dimension
-    "n_a": [8, 16, 32, 64],          # attention embedding dimension
+    "n_d": [8, 16, 32, 64],
+    "n_a": [8, 16, 32, 64],
     "n_steps": [3, 5, 7],
     "gamma": [1.0, 1.3, 1.5, 2.0],
     "lambda_sparse": [1e-5, 1e-4, 1e-3],
@@ -131,13 +141,11 @@ def manual_random_search(model_class, param_grid, X_train, y_train, n_iter=20, v
     """Random search for a non‑sklearn model using a simple train/val split."""
     best_score = -1
     best_params = None
-    # Use a fixed validation set for fairness
     X_tr, X_val, y_tr, y_val = train_test_split(
         X_train, y_train, test_size=val_size, random_state=SEED, stratify=y_train
     )
     for i in range(n_iter):
         params = _sample_params(param_grid)
-        # Clone model class with new parameters
         model = model_class(**params)
         try:
             acc = _evaluate_model(model, X_tr, y_tr, X_val, y_val)
@@ -149,19 +157,19 @@ def manual_random_search(model_class, param_grid, X_train, y_train, n_iter=20, v
     return {"best_params": best_params, "best_score": float(best_score) if best_params else 0.0}
 
 # ------------------------------------------------------------
-# Preprocessing (same as benchmark)
+# Worker: search a single baseline model
+#   (recreates model & loads data inside the worker)
 # ------------------------------------------------------------
-def preprocess_data(X_raw):
-    imputer = SimpleImputer(strategy='median')
-    X_imp = imputer.fit_transform(X_raw)
-    scaler = StandardScaler()
-    X_scaled = scaler.fit_transform(X_imp)
-    return X_scaled
+def search_single_baseline_model(model_name, dataset_name, target_col, n_features, n_classes):
+    """
+    Load data, build the model, and run hyperparameter search.
+    Returns (model_name, best_result_dict) or (model_name, None) if skipped.
+    """
+    # Models with no tunable parameters
+    if model_name in ["IGTD-inspired", "Naive Reshape"]:
+        return model_name, None
 
-# ------------------------------------------------------------
-# Run search for all baseline models
-# ------------------------------------------------------------
-def search_baseline_models(dataset_name, target_col):
+    # Load dataset (lightweight – file cache makes it cheap)
     raw_path = PROJECT_ROOT / "data" / "raw" / f"{dataset_name}.csv"
     df = pd.read_csv(raw_path)
     X = df.drop(columns=[target_col])
@@ -169,144 +177,215 @@ def search_baseline_models(dataset_name, target_col):
     le = LabelEncoder()
     y_enc = le.fit_transform(y)
 
-    n_features = X.shape[1]
-    n_classes = len(le.classes_)
+    # Preprocess only once per worker
+    # scaled data for neural models
+    imputer = SimpleImputer(strategy='median')
+    X_imp = imputer.fit_transform(X)
+    scaler = StandardScaler()
+    X_scaled = scaler.fit_transform(X_imp)
 
-    # Scale for neural models
-    X_scaled = preprocess_data(X)
+    # Choose raw vs scaled
+    if model_name in ["XGBoost", "LightGBM", "CatBoost", "Random Forest"]:
+        X_use = X.values
+    else:
+        X_use = X_scaled
 
-    # Get model instances (dummy, we'll use classes)
+    # Recreate the model instance
     models_dict = get_models(n_features, n_classes)
-    best_params_all = {}
+    model_obj = models_dict[model_name]
 
-    for model_name, model_obj in models_dict.items():
-        if model_name.startswith("AG-T2I"):
-            continue
-        print(f"\n--- {model_name} ---")
-        if model_name in ["IGTD-inspired", "Naive Reshape"]:
-            print("  No tunable parameters, skipping.")
-            continue
+    # ----- sklearn‑compatible models (grid search) -----
+    if model_name in PARAM_GRIDS:
+        grid = PARAM_GRIDS[model_name]
+        if model_name == "CatBoost":
+            model_obj.set_params(verbose=0)
+        if model_name == "MLP":
+            model_obj.set_params(early_stopping=True, validation_fraction=0.1, random_state=SEED)
 
-        # Choose data: tree models use raw, neural use scaled
-        if model_name in ["XGBoost", "LightGBM", "CatBoost", "Random Forest"]:
-            X_use = X.values
-        else:
-            X_use = X_scaled
+        search = RandomizedSearchCV(
+            estimator=model_obj,
+            param_distributions=grid,
+            n_iter=N_ITER,
+            cv=StratifiedKFold(n_splits=SEARCH_CV, shuffle=True, random_state=SEED),
+            scoring="accuracy",
+            n_jobs=1,
+            random_state=SEED,
+            verbose=0,   # keep output clean when multiple workers run
+        )
+        t0 = time.time()
+        search.fit(X_use, y_enc)
+        elapsed = time.time() - t0
+        best = {
+            "best_params": search.best_params_,
+            "best_score": float(search.best_score_),
+            "time": elapsed,
+        }
 
-        # ----- SKLearn compatible models (XGB, LGBM, CatBoost, RF, MLP) -----
-        if model_name in PARAM_GRIDS:
-            grid = PARAM_GRIDS[model_name]
-            # For CatBoost we need to disable verbosity
-            if model_name == "CatBoost":
-                model_obj.set_params(verbose=0)
-            if model_name == "MLP":
-                model_obj.set_params(early_stopping=True, validation_fraction=0.1, random_state=SEED)
+    # ----- TabNet (manual search, uses GPU) -----
+    elif model_name == "TabNet":
+        model_cls = model_obj.__class__
+        best = manual_random_search(model_cls, TABNET_SEARCH_GRID, X_use, y_enc, n_iter=N_ITER)
+        best["time"] = 0.0
 
-            search = RandomizedSearchCV(
-                estimator=model_obj,
-                param_distributions=grid,
-                n_iter=N_ITER,
-                cv=StratifiedKFold(n_splits=SEARCH_CV, shuffle=True, random_state=SEED),
-                scoring="accuracy",
-                n_jobs=1,
-                random_state=SEED,
-                verbose=1,
-            )
-            t0 = time.time()
-            search.fit(X_use, y_enc)
-            elapsed = time.time() - t0
-            best = {"best_params": search.best_params_, "best_score": float(search.best_score_), "time": elapsed}
-            print(f"  Best score: {best['best_score']:.4f}")
+    # ----- FT-Transformer (lite) (manual search, GPU if available) -----
+    elif model_name == "FT-Transformer (lite)":
+        model_cls = model_obj.__class__
+        best = manual_random_search(model_cls, FT_TRANSFORMER_GRID, X_use, y_enc, n_iter=N_ITER)
+        best["time"] = 0.0
 
-        # ----- TabNet (pytorch_tabnet) -----
-        elif model_name == "TabNet":
-            # Get class from object
-            model_cls = model_obj.__class__
-            best = manual_random_search(model_cls, TABNET_SEARCH_GRID, X_use, y_enc, n_iter=N_ITER)
-            best["time"] = 0.0
+    else:
+        print(f"  No search routine for {model_name}, skipping.")
+        return model_name, None
 
-        # ----- FT-Transformer (lite) -----
-        elif model_name == "FT-Transformer (lite)":
-            model_cls = model_obj.__class__
-            best = manual_random_search(model_cls, FT_TRANSFORMER_GRID, X_use, y_enc, n_iter=N_ITER)
-            best["time"] = 0.0
-
-        else:
-            print(f"  No search routine for {model_name}, skipping.")
-            continue
-
-        best_params_all[model_name] = best
-
-    return best_params_all
+    print(f"  ✅ {model_name:20s} best score: {best['best_score']:.4f}  (time: {best.get('time',0):.1f}s)")
+    return model_name, best
 
 # ------------------------------------------------------------
-# AG‑T2I per‑layout search
+# Worker: search a single AG‑T2I layout
 # ------------------------------------------------------------
-def search_agt2i_per_layout(dataset_name, target_col, trials_per_layout=20, method="random"):
-    layouts = ["step_row", "packed", "packed_T", "step_sparse", "attention_map"]
+def search_single_ag_t2i_layout(layout, dataset_name, target_col, trials, method, seed):
+    """
+    Run random/bayesian search for one AG‑T2I layout.
+    Returns (layout_key, best_result_dict) or (layout_key, None).
+    """
     api = SimplePipelineAPI(base_path=PROJECT_ROOT)
-    best_per_layout = {}
-
-    for layout in layouts:
-        print(f"\n--- AG-T2I-{layout} (method={method}) ---")
+    try:
         if method == "random":
             df = api.random_search(
                 dataset=dataset_name,
                 target_column=target_col,
                 layouts=[layout],
-                n_trials=trials_per_layout,
-                seed=SEED,
+                n_trials=trials,
+                seed=seed,
                 quiet=False,
-                optimization_metric="accuracy"
+                optimization_metric="accuracy",
             )
         else:  # bayesian
             df = api.bayesian_search(
                 dataset=dataset_name,
                 target_column=target_col,
                 layouts=[layout],
-                n_trials=trials_per_layout,
-                seed=SEED,
+                n_trials=trials,
+                seed=seed,
                 quiet=False,
-                optimization_metric="accuracy"
+                optimization_metric="accuracy",
             )
-        if df.empty:
-            print("  No successful trials.")
-            continue
-        best = df.iloc[0]
-        best_params = {}
-        for col in df.columns:
-            if col.startswith("param_"):
-                key = col.replace("param_", "")
-                best_params[key] = best[col]
-        best_per_layout[f"AG-T2I-{layout}"] = {
-            "best_params": best_params,
-            "best_score": float(best["accuracy"]),
-        }
-        print(f"  Best accuracy: {best['accuracy']:.4f}")
-    return best_per_layout
+    except Exception as e:
+        print(f"  ❌ AG-T2I-{layout} search failed: {e}")
+        return f"AG-T2I-{layout}", None
+
+    if df.empty:
+        print(f"  ⚠ AG-T2I-{layout} no successful trials.")
+        return f"AG-T2I-{layout}", None
+
+    best = df.iloc[0]
+    best_params = {col.replace("param_", ""): best[col] for col in df.columns if col.startswith("param_")}
+    result = {
+        "best_params": best_params,
+        "best_score": float(best["accuracy"]),
+    }
+    print(f"  ✅ AG-T2I-{layout:20s} accuracy: {best['accuracy']:.4f}")
+    return f"AG-T2I-{layout}", result
 
 # ------------------------------------------------------------
-# Main
+# Main parallel search orchestration
 # ------------------------------------------------------------
-def run_full_search(dataset_name, target_col="Class", agt2i_trials=20, agt2i_method="random"):
+def run_full_search(dataset_name, target_col="Class", agt2i_trials=20, agt2i_method="random",
+                    cpu_workers=None):
     print(f"=== Hyperparameter search for {dataset_name} ===")
     set_seed(SEED)
 
-    # 1. Baseline models
-    baseline_best = search_baseline_models(dataset_name, target_col)
+    # Determine n_features / n_classes from a quick peek (lightweight)
+    raw_path = PROJECT_ROOT / "data" / "raw" / f"{dataset_name}.csv"
+    df = pd.read_csv(raw_path)
+    X = df.drop(columns=[target_col])
+    y = df[target_col]
+    le = LabelEncoder()
+    y_enc = le.fit_transform(y)
+    n_features = X.shape[1]
+    n_classes = len(le.classes_)
 
-    # 2. AG‑T2I per layout
-    agt2i_best = search_agt2i_per_layout(dataset_name, target_col,
-                                         trials_per_layout=agt2i_trials,
-                                         method=agt2i_method)
+    # Get model names only – do not create heavy instances here
+    all_models = get_models(n_features, n_classes).keys()
+    baseline_names = [m for m in all_models if not m.startswith("AG-T2I")]
 
-    # Merge and save
-    all_best = {**baseline_best, **agt2i_best}
+    # Separate CPU / GPU models using simple set
+    cpu_names = [m for m in baseline_names if m not in GPU_MODELS]
+    gpu_names = [m for m in baseline_names if m in GPU_MODELS]
+
+    # ----- 1. CPU models in parallel -----
+    print("\n--- CPU models (parallel) ---")
+    cpu_tasks = [(name, dataset_name, target_col, n_features, n_classes) for name in cpu_names]
+
+    cpu_results = {}
+    if cpu_tasks:
+        # Use cpu_workers if given, else all cores minus one to avoid oversubscription
+        n_jobs = cpu_workers if cpu_workers else max(1, os.cpu_count() - 1)
+        with parallel_backend('loky', n_jobs=n_jobs):
+            res_list = Parallel(verbose=10, pre_dispatch="2*n_jobs")(
+                delayed(search_single_baseline_model)(*task) for task in cpu_tasks
+            )
+        for name, best in res_list:
+            if best is not None:
+                cpu_results[name] = best
+
+    # ----- 2. GPU models (sequential to avoid contention) -----
+    print("\n--- GPU models (sequential) ---")
+    gpu_results = {}
+    for name in gpu_names:
+        # These models are few (TabNet, maybe FT-Transformer), so run one by one
+        _, best = search_single_baseline_model(name, dataset_name, target_col, n_features, n_classes)
+        if best is not None:
+            gpu_results[name] = best
+
+    # ----- 3. AG‑T2I layouts (sequential, all use GPU) -----
+    layouts = ["step_row", "packed", "packed_T", "step_sparse", "attention_map"]
+    agt2i_results = {}
+    for layout in layouts:
+        key, best = search_single_ag_t2i_layout(
+            layout, dataset_name, target_col, agt2i_trials, agt2i_method, SEED
+        )
+        if best is not None:
+            agt2i_results[key] = best
+
+    # Combine and save
+    all_best = {**cpu_results, **gpu_results, **agt2i_results}
     out_path = RESULTS_DIR / f"{dataset_name}_best_params.json"
     with open(out_path, "w") as f:
         json.dump(all_best, f, indent=2)
+
     print(f"\n✅ All best parameters saved to {out_path}")
 
+    # ------------------------------------------------------------
+    # Automatically run benchmark_parallel afterwards
+    # ------------------------------------------------------------
+    import subprocess
+
+    benchmark_script = PROJECT_ROOT / "running_all_models" / "benchmark_parallel.py"
+    results_hps_dir = PROJECT_ROOT / "running_all_models" / "results_hps"
+    results_hps_dir.mkdir(parents=True, exist_ok=True)
+
+    env = os.environ.copy()
+    env["RESULTS_DIR"] = str(results_hps_dir)
+
+    print("\n🚀 Starting benchmark_parallel...\n")
+    workers = cpu_workers or max(1, os.cpu_count() - 2)
+    subprocess.run(
+        [
+            sys.executable,
+            str(benchmark_script),
+            "--dataset",
+            dataset_name,
+            "--workers",
+            str(workers),
+        ],
+    )
+    print("\n✅ Benchmark completed successfully!")
+    print(f"📁 Results saved to: {results_hps_dir}")
+
+# ------------------------------------------------------------
+# CLI
+# ------------------------------------------------------------
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser()
@@ -315,6 +394,9 @@ if __name__ == "__main__":
     parser.add_argument("--agt2i_trials", type=int, default=20,
                         help="Number of trials per AG‑T2I layout")
     parser.add_argument("--agt2i_method", choices=["random", "bayesian"], default="random")
+    parser.add_argument("--cpu_workers", type=int, default=None,
+                        help="Number of parallel workers for CPU models (default: all CPUs minus one)")
     args = parser.parse_args()
 
-    run_full_search(args.dataset, args.target, args.agt2i_trials, args.agt2i_method)
+    run_full_search(args.dataset, args.target, args.agt2i_trials, args.agt2i_method,
+                    cpu_workers=args.cpu_workers)
