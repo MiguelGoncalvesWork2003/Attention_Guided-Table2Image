@@ -1,0 +1,53 @@
+{
+    "XGBoost": {
+        "n_estimators": 100,
+        "max_depth": 5,
+        "learning_rate": 0.05731905665524789,
+        "subsample": 0.6005514097201762,
+        "colsample_bytree": 0.6905910558277383,
+        "gamma": 0.02489385734403493,
+        "min_child_weight": 10
+    },
+    "LightGBM": {
+        "n_estimators": 200,
+        "num_leaves": 120,
+        "learning_rate": 0.012615135546199202,
+        "max_depth": 7,
+        "subsample": 0.6711176686013386,
+        "feature_fraction": 0.8935823377337822,
+        "min_child_samples": 7
+    },
+    "CatBoost": {
+        "iterations": 250,
+        "depth": 7,
+        "learning_rate": 0.06748162415602818,
+        "l2_leaf_reg": 9.879343243808167
+    },
+    "TabNet": {
+        "n_d": 24,
+        "n_a": 19,
+        "n_steps": 3,
+        "gamma": 1.7946673563679902,
+        "lambda_sparse": 0.0002198458083791934,
+        "lr": 0.008293862967118556
+    },
+    "FT-Transformer (lite)": {
+        "d_token": 16,
+        "n_heads": 8,
+        "n_blocks": 2,
+        "dropout": 0.028215081977488274,
+        "lr": 0.0016291386954389133,
+        "batch_size": 32,
+        "epochs": 100
+    },
+    "IGTD-inspired": {
+        "epochs": 130,
+        "lr": 0.0008742154358145901,
+        "dropout": 0.1275722050730046
+    },
+    "Naive Reshape": {
+        "epochs": 100,
+        "lr": 0.0009380486783187972,
+        "dropout": 0.15191112420761904
+    }
+}

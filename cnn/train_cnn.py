@@ -52,9 +52,19 @@ from running_all_models.metrics import compute_extended_metrics
 
 BASE = Path(__file__).resolve().parent.parent
 
+
 DATASET = os.environ.get("DATASET", "BreastCancer")
 LAYOUT = os.environ.get("MOL_LAYOUT", "step_row")
 SEED = int(os.environ.get("SEED", 42))
+
+# ---- ISOLATION: use OUTPUT_DIR for all file I/O ----
+TASK_OUTPUT_DIR = Path(os.environ.get("OUTPUT_DIR", str(BASE / "data" / "processed" / DATASET)))
+TASK_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+MODEL_DIR = BASE / "cnn" / "cnn_models"   # keep this for backward compat if needed
+MODEL_DIR.mkdir(parents=True, exist_ok=True)
+
+# We will save the checkpoint and config into TASK_OUTPUT_DIR, not MODEL_DIR
 
 LEARNING_RATE = float(os.environ.get("CNN_LEARNING_RATE", 1e-3))
 OPTIMIZER_NAME = os.environ.get("CNN_OPTIMIZER", "adam").lower()
@@ -66,8 +76,8 @@ PROCESSED_DIR = BASE / "data/processed" / DATASET
 OUTPUT_DIR = BASE / "cnn/cnn_models"
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-MODEL_PATH = OUTPUT_DIR / f"best_model_{DATASET}_{LAYOUT}_seed{SEED}.pth"
-CONFIG_PATH = OUTPUT_DIR / f"cnn_config_{DATASET}_{LAYOUT}_seed{SEED}.json"
+MODEL_PATH = TASK_OUTPUT_DIR / f"best_model_{DATASET}_{LAYOUT}_seed{SEED}.pth"
+CONFIG_PATH = TASK_OUTPUT_DIR / f"cnn_config_{DATASET}_{LAYOUT}_seed{SEED}.json"
 
 def set_seed(seed):
     random.seed(seed)
@@ -78,7 +88,10 @@ def set_seed(seed):
 
 set_seed(SEED)
 
-X_train = np.load(PROCESSED_DIR / "X_train_img.npy")
+# Load images from the isolated output directory
+X_train = np.load(TASK_OUTPUT_DIR / "X_train_img.npy")
+
+# Labels are in the global processed directory (shared across layouts)
 y_train = np.load(PROCESSED_DIR / "y_train.npy")
 
 if X_train.ndim != 4:
@@ -102,11 +115,11 @@ train_loader = DataLoader(
 
 # Validation data (if exists)
 val_loader = None
-X_val_path = PROCESSED_DIR / "X_val_img.npy"
-y_val_path = PROCESSED_DIR / "y_val.npy"
+X_val_path = TASK_OUTPUT_DIR / "X_val_img.npy"
+y_val_path = TASK_OUTPUT_DIR / "y_val.npy"
 if X_val_path.exists() and y_val_path.exists():
-    X_val = np.load(X_val_path)
-    y_val = np.load(y_val_path)
+    X_val = np.load(TASK_OUTPUT_DIR / "X_val_img.npy")   # if val images exist there
+    y_val = np.load(PROCESSED_DIR / "y_val.npy")
     y_val = y_val - y_val.min()
     X_val = torch.tensor(X_val, dtype=torch.float32)
     y_val = torch.tensor(y_val, dtype=torch.long)
@@ -234,7 +247,7 @@ train_metrics_dict = compute_extended_metrics(all_labels, all_preds)
 # Prefix keys with "train_"
 train_metrics = {f"train_{k}": v for k, v in train_metrics_dict.items()}
 
-train_results_path = PROCESSED_DIR / f"cnn_training_results_{LAYOUT}_seed{SEED}.json"
+train_results_path = TASK_OUTPUT_DIR / f"cnn_training_results_{LAYOUT}_seed{SEED}.json"
 with open(train_results_path, "w") as f:
     json.dump(train_metrics, f, indent=2)
 

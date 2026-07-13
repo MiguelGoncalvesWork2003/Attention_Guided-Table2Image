@@ -2,8 +2,10 @@
 Factory that returns all baseline classifiers for the tabular‑to‑image
 comparison. Includes tree ensembles, TabNet, FT‑Transformer, and two CNN‑based
 tabular‑to‑image baselines (IGTD‑inspired and naive reshape).
+Extended with get_model_from_params for hyperparameter tuning.
 """
 
+import json
 import torch
 import torch.nn as nn
 import numpy as np
@@ -18,7 +20,7 @@ from pytorch_tabnet.tab_model import TabNetClassifier
 
 import sys
 from pathlib import Path
-PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 from cnn.cnn_model import TabNetCNN
 
@@ -64,16 +66,26 @@ class FTTransformerNative(nn.Module):
 
 
 class FTTransformerWrapper(BaseEstimator, ClassifierMixin):
-    def __init__(self, n_features, n_classes, epochs=50, batch_size=32, lr=1e-3):
+    # Extended to accept all tunable hyperparameters
+    def __init__(self, n_features, n_classes, epochs=50, batch_size=32, lr=1e-3,
+                 d_token=32, n_heads=4, n_blocks=2, dropout=0.1):
         self.n_features = n_features
         self.n_classes = n_classes
         self.epochs = epochs
         self.batch_size = batch_size
         self.lr = lr
+        self.d_token = d_token
+        self.n_heads = n_heads
+        self.n_blocks = n_blocks
+        self.dropout = dropout
         self.model = None
 
     def fit(self, X, y):
-        self.model = FTTransformerNative(self.n_features, self.n_classes).to(DEVICE)
+        self.model = FTTransformerNative(
+            self.n_features, self.n_classes,
+            d_token=self.d_token, n_heads=self.n_heads,
+            n_blocks=self.n_blocks, dropout=self.dropout
+        ).to(DEVICE)
         X_t = torch.tensor(X, dtype=torch.float32)
         y_t = torch.tensor(y, dtype=torch.long)
         dataset = torch.utils.data.TensorDataset(X_t, y_t)
@@ -223,11 +235,11 @@ class T2I_CNN(BaseEstimator, ClassifierMixin):
         return probs.cpu().numpy()
 
 
-# ---------- Model factory ----------
+# ---------- Model factory (legacy) ----------
 def get_models(input_dim, n_classes):
     """
-    Returns a dict of baseline classifiers ready to be trained.
-    AG‑T2I variants are handled separately via the pipeline API.
+    Returns a dict of baseline classifiers with default hyperparameters.
+    This is kept for backward compatibility; for tuning use get_model_from_params.
     """
     return {
         "XGBoost": XGBClassifier(n_estimators=100, random_state=42, eval_metric="mlogloss"),
@@ -242,3 +254,101 @@ def get_models(input_dim, n_classes):
         "IGTD-inspired": T2I_CNN(n_features=input_dim, n_classes=n_classes, mode="igtd"),
         "Naive Reshape": T2I_CNN(n_features=input_dim, n_classes=n_classes, mode="naive")
     }
+
+def get_tuned_models(dataset_name: str, n_features: int, n_classes: int):
+    """
+    Load the best hyperparameters for `dataset_name` from
+    `best_params/<dataset_name>.json` and return a dict of model instances.
+    If the JSON file does not exist, falls back to default parameters.
+    """
+    best_params_path = Path(__file__).parent / "best_params" / f"{dataset_name}.json"
+    if best_params_path.exists():
+        with open(best_params_path, "r") as f:
+            all_params = json.load(f)
+    else:
+        all_params = {}
+
+    models = {}
+    # Use the same model keys as in get_models()
+    for model_name in [
+        "XGBoost", "LightGBM", "CatBoost", "TabNet",
+        "FT-Transformer (lite)", "IGTD-inspired", "Naive Reshape"
+    ]:
+        params = all_params.get(model_name, {})
+        models[model_name] = get_model_from_params(model_name, n_features, n_classes, params)
+
+    return models
+
+# ---------- New: instantiate with hyperparameters ----------
+def get_model_from_params(model_name, n_features, n_classes, params=None):
+    """
+    Instantiate a model with given hyperparameters.
+    If params is None or empty, use defaults.
+    """
+    if params is None:
+        params = {}
+
+    if model_name == "XGBoost":
+        return XGBClassifier(
+            n_estimators=params.get('n_estimators', 100),
+            max_depth=params.get('max_depth', 6),
+            learning_rate=params.get('learning_rate', 0.3),
+            subsample=params.get('subsample', 1.0),
+            colsample_bytree=params.get('colsample_bytree', 1.0),
+            random_state=42,
+            eval_metric="mlogloss"
+        )
+    elif model_name == "LightGBM":
+        return LGBMClassifier(
+            n_estimators=params.get('n_estimators', 100),
+            num_leaves=params.get('num_leaves', 31),
+            learning_rate=params.get('learning_rate', 0.1),
+            subsample=params.get('subsample', 1.0),
+            colsample_bytree=params.get('colsample_bytree', 1.0),
+            random_state=42,
+            verbose=-1
+        )
+    elif model_name == "CatBoost":
+        return CatBoostClassifier(
+            iterations=params.get('iterations', 100),
+            depth=params.get('depth', 6),
+            learning_rate=params.get('learning_rate', 0.1),
+            l2_leaf_reg=params.get('l2_leaf_reg', 3.0),
+            random_state=42,
+            verbose=0
+        )
+    elif model_name == "TabNet":
+        return TabNetClassifier(
+            n_d=params.get('n_d', 8),
+            n_a=params.get('n_a', 8),
+            n_steps=params.get('n_steps', 3),
+            gamma=params.get('gamma', 1.5),
+            lambda_sparse=params.get('lambda_sparse', 1e-4),
+            optimizer_fn=torch.optim.Adam,
+            optimizer_params=dict(lr=params.get('lr', 2e-2)),
+            verbose=0
+        )
+    elif model_name == "FT-Transformer (lite)":
+        return FTTransformerWrapper(
+            n_features=n_features,
+            n_classes=n_classes,
+            epochs=params.get('epochs', 50),
+            batch_size=params.get('batch_size', 32),
+            lr=params.get('lr', 1e-3),
+            d_token=params.get('d_token', 32),
+            n_heads=params.get('n_heads', 4),
+            n_blocks=params.get('n_blocks', 2),
+            dropout=params.get('dropout', 0.1)
+        )
+    elif model_name in ["IGTD-inspired", "Naive Reshape"]:
+        mode = "igtd" if "IGTD" in model_name else "naive"
+        return T2I_CNN(
+            n_features=n_features,
+            n_classes=n_classes,
+            mode=mode,
+            epochs=params.get('epochs', 100),
+            lr=params.get('lr', 1e-3),
+            dropout=params.get('dropout', 0.3)
+        )
+    else:
+        raise ValueError(f"Unknown model name: {model_name}")

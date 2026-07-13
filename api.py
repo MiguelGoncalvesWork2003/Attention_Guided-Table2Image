@@ -128,7 +128,6 @@ class SplitManager:
         X = df.drop(columns=[target_column])
         y = df[target_column]
 
-        # Check if stratification is possible
         from collections import Counter
         class_counts = Counter(y)
         min_class_size = min(class_counts.values())
@@ -143,7 +142,6 @@ class SplitManager:
             train_idx = train_val_idx[train_idx]
             val_idx = train_val_idx[val_idx]
         else:
-            # Fallback to simple random split
             print(f"⚠️ Stratification not possible (smallest class has {min_class_size} sample). Using random split.")
             from sklearn.model_selection import train_test_split
             X_train_val, X_test, y_train_val, y_test = train_test_split(
@@ -153,7 +151,6 @@ class SplitManager:
                 X_train_val, y_train_val, test_size=val_size/(1-test_size),
                 random_state=seed, stratify=None
             )
-            # Get indices
             train_idx = X_train.index.to_numpy()
             val_idx = X_val.index.to_numpy()
             test_idx = X_test.index.to_numpy()
@@ -207,8 +204,6 @@ class SplitManager:
 class SimplePipelineAPI:
     def __init__(self, base_path: Optional[Path] = None):
         self.base_path = Path(base_path) if base_path else Path(__file__).resolve().parent
-
-        # Directories – exactly as in app.py
         self.raw_data_dir = self.base_path / "data" / "raw"
         self.processed_base = self.base_path / "data" / "processed"
         self.preprocess_dir = self.base_path / "preprocessing"
@@ -221,7 +216,6 @@ class SimplePipelineAPI:
         self.hp_search_dir = self.experiments_dir / "hyperparameter_search"
 
         self.hp_search_dir.mkdir(parents=True, exist_ok=True)
-
         self.split_manager = SplitManager(self.base_path)
 
     # ------------------------------------------------------------------
@@ -256,6 +250,9 @@ class SimplePipelineAPI:
         processed_dir = self.processed_base / dataset
         processed_dir.mkdir(parents=True, exist_ok=True)
 
+        # ---- OUTPUT_DIR isolation ----
+        output_dir = processed_dir / experiment_id
+        output_dir.mkdir(parents=True, exist_ok=True)
         env = {
             "DATASET": dataset,
             "TARGET_COL": target_column,
@@ -269,6 +266,7 @@ class SimplePipelineAPI:
             "SCALING": "standard",
             "ENCODE_CATEGORICALS": "true",
             "FORMAT_STEP_DISTRIBUTION": "true",
+            "OUTPUT_DIR": str(output_dir),          # <-- new
         }
         env.update(self.split_manager.get_split_env_vars(dataset, split_id))
 
@@ -312,7 +310,7 @@ class SimplePipelineAPI:
             elif mol_layout == "step_sparse" and 'columns_per_step' in layout_params:
                 env["SPARSE_COLUMNS_PER_STEP"] = str(layout_params['columns_per_step'])
 
-        processed_dir = self.processed_base / dataset
+        # Ensure global directories exist
         processed_dir.mkdir(parents=True, exist_ok=True)
         tabnet_out = self.tabnet_dir / "outputs" / f"output_{dataset}"
         tabnet_out.mkdir(parents=True, exist_ok=True)
@@ -321,16 +319,16 @@ class SimplePipelineAPI:
         mol_viz_dir = self.mol_viz_base / dataset
         mol_viz_dir.mkdir(parents=True, exist_ok=True)
 
-        results_file = processed_dir / f"cnn_evaluation_results_{mol_layout}.json"
+        # ---- Use output_dir for results ----
+        results_file = output_dir / f"cnn_evaluation_results_{mol_layout}.json"
 
         if reuse_existing and results_file.exists():
             if not quiet:
                 print(f"Using existing results for {dataset} ({mol_layout})")
-            # Even when reusing, we need to return structured result; try to load train metrics too
             test_metrics = {}
             with open(results_file, 'r') as f:
                 test_metrics = json.load(f)
-            train_metrics = self._load_train_metrics(processed_dir, mol_layout, seed)
+            train_metrics = self._load_train_metrics(output_dir, mol_layout, seed)
             return self._build_structured_result(mol_layout, seed, train_metrics, test_metrics)
 
         # Step 1: Preprocessing
@@ -339,8 +337,7 @@ class SimplePipelineAPI:
         success, output, _ = run_step(
             name="Preprocessing",
             script_path=self.preprocess_dir / "run_preprocessing.py",
-            env_vars=env#,
-            #timeout=600
+            env_vars=env
         )
         if not success:
             error_msg = output[:500] if output else "Preprocessing failed"
@@ -354,8 +351,7 @@ class SimplePipelineAPI:
         success, output, _ = run_step(
             name="TabNet Training",
             script_path=self.tabnet_dir / "train_tabnet.py",
-            env_vars=env#,
-            #timeout=900
+            env_vars=env
         )
         if not success:
             error_msg = output[:500] if output else "TabNet training failed"
@@ -369,8 +365,7 @@ class SimplePipelineAPI:
         success, output, _ = run_step(
             name="Image Building",
             script_path=self.image_dir / "tabnet_image_builder.py",
-            env_vars=env#,
-            #timeout=300
+            env_vars=env
         )
         if not success:
             error_msg = output[:500] if output else "Image building failed"
@@ -384,8 +379,7 @@ class SimplePipelineAPI:
         success, output, _ = run_step(
             name="CNN Training",
             script_path=self.cnn_dir / "train_cnn.py",
-            env_vars=env#,
-            #timeout=600
+            env_vars=env
         )
         if not success:
             error_msg = output[:500] if output else "CNN training failed"
@@ -399,8 +393,7 @@ class SimplePipelineAPI:
         success, output, _ = run_step(
             name="CNN Evaluation",
             script_path=self.cnn_dir / "evaluate_cnn.py",
-            env_vars=env#,
-            #timeout=300
+            env_vars=env
         )
         if not success:
             error_msg = output[:500] if output else "CNN evaluation failed"
@@ -415,27 +408,24 @@ class SimplePipelineAPI:
             run_step(
                 name="MOL Visualization",
                 script_path=self.image_dir / "mol_visualizations.py",
-                env_vars=env#,
-                #timeout=300
+                env_vars=env
             )
         except Exception as e:
             if not quiet:
                 print(f"⚠️ MOL visualizations failed (non‑critical): {e}")
 
-        # ------------------------------------------------------------------
-        # Read test and train metrics
-        # ------------------------------------------------------------------
+        # Read metrics from OUTPUT_DIR
         test_metrics = {}
         if results_file.exists():
             with open(results_file, 'r') as f:
                 test_metrics = json.load(f)
 
-        train_metrics = self._load_train_metrics(processed_dir, mol_layout, seed)
+        train_metrics = self._load_train_metrics(output_dir, mol_layout, seed)
 
         return self._build_structured_result(mol_layout, seed, train_metrics, test_metrics)
     
-    def _load_train_metrics(self, processed_dir, mol_layout, seed):
-        train_file = processed_dir / f"cnn_training_results_{mol_layout}_seed{seed}.json"
+    def _load_train_metrics(self, output_dir, mol_layout, seed):
+        train_file = output_dir / f"cnn_training_results_{mol_layout}_seed{seed}.json"
         if train_file.exists():
             with open(train_file, 'r') as f:
                 return json.load(f)
@@ -453,16 +443,16 @@ class SimplePipelineAPI:
                 "recall_macro": train_metrics.get("train_recall_macro", np.nan),
             },
              "test": {
-            "accuracy": test_metrics.get("accuracy", np.nan),
-            "balanced_accuracy": test_metrics.get("balanced_accuracy", np.nan),
-            "f1_macro": test_metrics.get("f1_macro", test_metrics.get("f1_score", np.nan)),
-            "precision_macro": test_metrics.get("precision_macro", np.nan),
-            "recall_macro": test_metrics.get("recall_macro", np.nan),
-            "f1_weighted": test_metrics.get("f1_weighted", np.nan),
-            "precision_weighted": test_metrics.get("precision_weighted", np.nan),
-            "recall_weighted": test_metrics.get("recall_weighted", np.nan),
-            "auroc": test_metrics.get("roc_auc", test_metrics.get("auroc", np.nan)),
-        },
+                "accuracy": test_metrics.get("accuracy", np.nan),
+                "balanced_accuracy": test_metrics.get("balanced_accuracy", np.nan),
+                "f1_macro": test_metrics.get("f1_macro", test_metrics.get("f1_score", np.nan)),
+                "precision_macro": test_metrics.get("precision_macro", np.nan),
+                "recall_macro": test_metrics.get("recall_macro", np.nan),
+                "f1_weighted": test_metrics.get("f1_weighted", np.nan),
+                "precision_weighted": test_metrics.get("precision_weighted", np.nan),
+                "recall_weighted": test_metrics.get("recall_weighted", np.nan),
+                "auroc": test_metrics.get("roc_auc", test_metrics.get("auroc", np.nan)),
+            },
             "error": None
         }
     
@@ -475,7 +465,6 @@ class SimplePipelineAPI:
             metrics.update(eval_results)
         except Exception as e:
             print(f"⚠️ Warning: Could not read {results_file}: {e}", file=sys.stderr)
-
         return {
             "layout": mol_layout,
             "seed": seed,
@@ -663,7 +652,6 @@ class SimplePipelineAPI:
         layouts = layouts or ["step_row", "packed", "packed_T", "step_sparse", 'attention_map']
         self._ensure_persistent_split(dataset, target_column, split_id, seed)
 
-        # Use SQLite storage – safe for single process and works on Windows without symlink privileges
         db_path = self.hp_search_dir / "optuna_study.db"
         storage_url = f"sqlite:///{db_path}"
         study_name = study_name or f"{dataset}_bayesian"
@@ -865,23 +853,20 @@ def main():
             mol_layout=args.layout,
             seed=args.seed,
             reuse_existing=not args.no_reuse,
-            quiet=False   # Show progress
+            quiet=False
         )
         if result.get('error'):
             print(f"\n❌ Pipeline failed: {result['error']}")
         else:
             print("\nResults:")
-
             print("\nTrain:")
             print(f"  Accuracy: {result['train']['accuracy']:.2%}")
             print(f"  Balanced Accuracy: {result['train']['balanced_accuracy']:.2%}")
             print(f"  F1 Macro: {result['train']['f1_macro']:.2%}")
-
             print("\nTest:")
             print(f"  Accuracy: {result['test']['accuracy']:.2%}")
             print(f"  Balanced Accuracy: {result['test']['balanced_accuracy']:.2%}")
             print(f"  F1 Macro: {result['test']['f1_macro']:.2%}")
-
             print(f"\nLayout: {result['layout']}")
 
 if __name__ == "__main__":

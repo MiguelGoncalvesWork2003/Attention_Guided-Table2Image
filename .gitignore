@@ -31,3 +31,8 @@ to_csv.py
 debug.py
 catboost_info
 cache/
+
+running_all_models/studies/*.db
+running_all_models/studies/*.db-journal
+running_all_models/studies/*.db-wal
+running_all_models/studies/*.db-shm

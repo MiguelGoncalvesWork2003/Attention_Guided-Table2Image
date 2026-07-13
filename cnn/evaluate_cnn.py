@@ -62,17 +62,19 @@ def main():
     # CONFIGURATION
     # -------------------------
     BASE = Path(__file__).resolve().parent.parent
-    
+
     DATASET = os.environ.get("DATASET", "BreastCancer")
     LAYOUT = os.environ.get("MOL_LAYOUT", "step_row")
     SEED = int(os.environ.get("SEED", 42))
-    
-    MODEL_DIR = BASE / "cnn" / "cnn_models"
-    PROCESSED_DIR = BASE / "data" / "processed" / DATASET
+    PROCESSED_DIR = BASE / "data/processed" / DATASET
+
+    # ---- ISOLATION: use OUTPUT_DIR for all file I/O ----
+    TASK_OUTPUT_DIR = Path(os.environ.get("OUTPUT_DIR", str(BASE / "data" / "processed" / DATASET)))
+    TASK_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     
     # Model paths
-    MODEL_PATH = MODEL_DIR / f"best_model_{DATASET}_{LAYOUT}_seed{SEED}.pth"
-    CONFIG_PATH = MODEL_DIR / f"cnn_config_{DATASET}_{LAYOUT}_seed{SEED}.json"
+    MODEL_PATH = TASK_OUTPUT_DIR  / f"best_model_{DATASET}_{LAYOUT}_seed{SEED}.pth"
+    CONFIG_PATH = TASK_OUTPUT_DIR  / f"cnn_config_{DATASET}_{LAYOUT}_seed{SEED}.json"
     
     # -------------------------
     # VALIDATE INPUTS
@@ -96,8 +98,9 @@ def main():
     # -------------------------
     # LOAD TEST DATA
     # -------------------------
-    X_test_path = PROCESSED_DIR / "X_test_img.npy"
-    y_test_path = PROCESSED_DIR / "y_test.npy"
+    # Load test images from the isolated output directory
+    X_test_path = TASK_OUTPUT_DIR / "X_test_img.npy"
+    y_test_path = PROCESSED_DIR / "y_test.npy"          # <-- from global processed dir
     
     if not X_test_path.exists():
         raise FileNotFoundError(f"Test images not found at {X_test_path}")
@@ -205,30 +208,30 @@ def main():
     # -------------------------
     print("\nSaving evaluation results...")
     
-    PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
+    TASK_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     
     # Save comprehensive JSON results (for UI)
-    results_json_path = PROCESSED_DIR / f"cnn_evaluation_results_{LAYOUT}.json"
+    results_json_path = TASK_OUTPUT_DIR / f"cnn_evaluation_results_{LAYOUT}.json"
     save_metrics_to_json(metrics, str(results_json_path))
     print(f"✓ Results saved to {results_json_path}")
     
     # Save predictions
-    pred_path = PROCESSED_DIR / f"y_test_pred_{LAYOUT}.npy"
+    pred_path = TASK_OUTPUT_DIR / f"y_test_pred_{LAYOUT}.npy"
     np.save(pred_path, y_pred)
     print(f"✓ Predictions saved to {pred_path}")
     
     # Save probabilities
-    prob_path = PROCESSED_DIR / f"y_test_prob_{LAYOUT}.npy"
+    prob_path = TASK_OUTPUT_DIR / f"y_test_prob_{LAYOUT}.npy"
     np.save(prob_path, y_prob)
     print(f"✓ Probabilities saved to {prob_path}")
     
     # Save confusion matrix separately
-    cm_path = PROCESSED_DIR / f"confusion_matrix_{LAYOUT}.npy"
+    cm_path = TASK_OUTPUT_DIR / f"confusion_matrix_{LAYOUT}.npy"
     np.save(cm_path, np.array(metrics["confusion_matrix"]))
     print(f"✓ Confusion matrix saved to {cm_path}")
     
     # Save classification report separately
-    report_path = PROCESSED_DIR / f"classification_report_{LAYOUT}.json"
+    report_path = TASK_OUTPUT_DIR / f"classification_report_{LAYOUT}.json"
     with open(report_path, 'w') as f:
         json.dump(metrics["classification_report"], f, indent=2)
     print(f"✓ Classification report saved to {report_path}")
@@ -241,7 +244,7 @@ def main():
     if y_prob is not None:
         combined["y_prob"] = y_prob.tolist()
     
-    combined_path = PROCESSED_DIR / f"predictions_{LAYOUT}.json"
+    combined_path = TASK_OUTPUT_DIR / f"predictions_{LAYOUT}.json"
     with open(combined_path, 'w') as f:
         json.dump(combined, f)
     print(f"✓ Combined predictions saved to {combined_path}")

@@ -1,7 +1,8 @@
 """
 Benchmark script – parallel models per dataset, full CPU utilisation,
 with caching of TabNet training per fold and explicit GPU support.
-(Fixes: parallel‑safe AG‑T2I splits, top‑level worker functions for joblib)
+(Fixes: parallel‑safe AG‑T2I splits, top‑level worker functions for joblib,
+        full parallelism for AG‑T2I tasks via OUTPUT_DIR isolation)
 """
 
 import os
@@ -14,6 +15,7 @@ import numpy as np
 from pathlib import Path
 from filelock import FileLock
 import warnings
+from models_factory import get_tuned_models
 warnings.filterwarnings("ignore", category=FutureWarning)
 warnings.filterwarnings("ignore", message="X does not have valid feature names")
 
@@ -65,6 +67,7 @@ CACHE_DIR = PROJECT_ROOT / "cache"
 CACHE_DIR.mkdir(exist_ok=True, parents=True)
 
 DATASETS = [
+    ("Iris", "Class"),
     ("Diabetes", "Class"),
     ("Cancer", "Class"),
     ("Glass", "Class"),
@@ -137,7 +140,7 @@ def _move_model_to_device(model):
 
 # ------------------------------------------------------------
 # AG‑T2I helper with caching of preprocessing + TabNet per fold
-# (Parallel‑safe: per‑fold split files inside the cache lock)
+# (Parallel‑safe: per‑fold split files and unique OUTPUT_DIR)
 # ------------------------------------------------------------
 def run_agt2i_fold(dataset, target, layout, seed, train_idx, test_idx):
     """
@@ -160,7 +163,7 @@ def run_agt2i_fold(dataset, target, layout, seed, train_idx, test_idx):
     train_path = idx_dir / "train_idx.npy"
     test_path  = idx_dir / "test_idx.npy"
 
-    # Common environment
+    # Common environment (without layout/output yet)
     env = {
         "DATASET": dataset,
         "TARGET_COL": target,
@@ -185,11 +188,13 @@ def run_agt2i_fold(dataset, target, layout, seed, train_idx, test_idx):
             np.save(train_path, train_idx)
             np.save(test_path, test_idx)
 
+            # Use a fixed layout for the cached part (step_row)
             env["MOL_LAYOUT"] = "step_row"
             env["EXPERIMENT_ID"] = f"tabnet_cache_{fold_str}"
             env["TRAIN_IDX_PATH"] = str(train_path)
             env["TEST_IDX_PATH"]  = str(test_path)
             env["USE_CUSTOM_SPLIT"] = "true"
+            # No OUTPUT_DIR needed for preprocessing/TabNet – they use global dirs
 
             success, _, _ = run_step(
                 name="Preprocessing",
@@ -209,14 +214,19 @@ def run_agt2i_fold(dataset, target, layout, seed, train_idx, test_idx):
 
             tabnet_flag.touch()
 
-    # After the lock, set split paths for all subsequent steps
+    # -------- Now set layout-specific environment and OUTPUT_DIR ----
+    env["MOL_LAYOUT"] = layout
+    env["EXPERIMENT_ID"] = f"{layout}_seed{seed}_{fold_str[:8]}"
     env["TRAIN_IDX_PATH"] = str(train_path)
     env["TEST_IDX_PATH"]  = str(test_path)
     env["USE_CUSTOM_SPLIT"] = "true"
 
+    # Unique output directory for this (seed, fold, layout) combination
+    output_dir = processed_dir / f"{fold_str}_{layout}"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    env["OUTPUT_DIR"] = str(output_dir)
+
     # -------- Image building for this specific layout --------
-    env["MOL_LAYOUT"] = layout
-    env["EXPERIMENT_ID"] = f"{layout}_seed{seed}_{fold_str[:8]}"
     success, _, _ = run_step(
         name="Image Building",
         script_path=base / "image_builder" / "tabnet_image_builder.py",
@@ -243,14 +253,14 @@ def run_agt2i_fold(dataset, target, layout, seed, train_idx, test_idx):
     if not success:
         raise RuntimeError(f"CNN evaluation failed for layout {layout}")
 
-    # -------- Collect results --------
-    results_file = processed_dir / f"cnn_evaluation_results_{layout}.json"
+    # -------- Collect results (from the task’s output_dir) --------
+    results_file = output_dir / f"cnn_evaluation_results_{layout}.json"
     test_metrics = {}
     if results_file.exists():
         with open(results_file, "r") as f:
             test_metrics = json.load(f)
 
-    train_file = processed_dir / f"cnn_training_results_{layout}_seed{seed}.json"
+    train_file = output_dir / f"cnn_training_results_{layout}_seed{seed}.json"
     train_metrics = {}
     if train_file.exists():
         with open(train_file, "r") as f:
@@ -284,11 +294,6 @@ def run_agt2i_fold(dataset, target, layout, seed, train_idx, test_idx):
 # ------------------------------------------------------------
 def run_model_on_fold(model_name, model_obj, dataset_name, target_col, seed, fold,
                       train_idx, test_idx, le_classes):
-    # ---- AG‑T2I block: run all layouts sequentially ----
-    if model_name == "AG-T2I-BLOCK":
-        layouts = ["step_row", "packed", "packed_T", "step_sparse", "attention_map"]
-        return run_agt2i_sequential(layouts, dataset_name, target_col, seed, fold,
-                                   train_idx, test_idx)
     results = []
     def add_nan_rows():
         for subset in ["train", "test"]:
@@ -407,7 +412,7 @@ def run_model_on_fold(model_name, model_obj, dataset_name, target_col, seed, fol
 
             print(f"  ✅ {model_name:20s} seed {seed} fold {fold} done in {elapsed:.1f}s")
 
-        # ---- AG‑T2I variants ----
+        # ---- AG‑T2I variants (now fully parallel) ----
         else:
             layout = model_name.replace("AG-T2I-", "")
             start_t = time.time()
@@ -439,58 +444,9 @@ def run_model_on_fold(model_name, model_obj, dataset_name, target_col, seed, fol
 
     return results
 
-# ------------------------------------------------------------
-# Benchmark a single dataset – all tasks submitted at once
-# ------------------------------------------------------------
-# ------------------------------------------------------------
-# Helper: run all AG‑T2I layouts for one fold sequentially
-# ------------------------------------------------------------
-def run_agt2i_sequential(layouts, dataset_name, target_col, seed, fold,
-                         train_idx, test_idx):
-    """Run all layouts one after another, collecting results."""
-    fold_results = []
-    for layout in layouts:
-        try:
-            start_t = time.time()
-            result = run_agt2i_fold(
-                dataset_name, target_col, layout, seed,
-                np.array(train_idx), np.array(test_idx)
-            )
-            elapsed = time.time() - start_t
-            model_name = f"AG-T2I-{layout}"
-            for subset in ["train", "test"]:
-                sub = result.get(subset, {})
-                fold_results.append({
-                    "model": model_name, "seed": seed, "fold": fold,
-                    "subset": subset,
-                    "accuracy": sub.get("accuracy", np.nan),
-                    "balanced_accuracy": sub.get("balanced_accuracy", np.nan),
-                    "precision_macro": sub.get("precision_macro", np.nan),
-                    "recall_macro": sub.get("recall_macro", np.nan),
-                    "f1_macro": sub.get("f1_macro", np.nan),
-                    "precision_weighted": np.nan,
-                    "recall_weighted": np.nan,
-                    "f1_weighted": np.nan,
-                    "roc_auc": sub.get("auroc", np.nan),
-                    "time_sec": elapsed
-                })
-            print(f"  ✅ {model_name:20s} seed {seed} fold {fold} done in {elapsed:.1f}s")
-        except Exception as e:
-            print(f"  ❌ AG-T2I-{layout:20s} seed {seed} fold {fold} ERROR: {e}")
-            for subset in ["train", "test"]:
-                fold_results.append({
-                    "model": f"AG-T2I-{layout}", "seed": seed, "fold": fold, "subset": subset,
-                    "accuracy": np.nan, "balanced_accuracy": np.nan,
-                    "precision_macro": np.nan, "recall_macro": np.nan,
-                    "f1_macro": np.nan, "precision_weighted": np.nan,
-                    "recall_weighted": np.nan, "f1_weighted": np.nan,
-                    "roc_auc": np.nan, "time_sec": np.nan
-                })
-    return fold_results
-
 
 # ------------------------------------------------------------
-# Benchmark a single dataset – all tasks submitted at once
+# Benchmark a single dataset – ALL tasks submitted in parallel
 # ------------------------------------------------------------
 def run_dataset_benchmark(dataset_name, target_col, n_workers=None):
     raw_path = PROJECT_ROOT / "data" / "raw" / f"{dataset_name}.csv"
@@ -507,83 +463,40 @@ def run_dataset_benchmark(dataset_name, target_col, n_workers=None):
     n_classes = len(le.classes_)
     le_classes = le.classes_
 
-    models_dict = get_models(n_features, n_classes)
+    models_dict = get_tuned_models(dataset_name, n_features, n_classes)
     agt2i_layouts = [
         "step_row", "packed", "packed_T", "step_sparse", "attention_map"
     ]
 
-    # Build baseline tasks (no AG-T2I)
-    baseline_tasks = []
-    agt2i_tasks = []   # will run sequentially later
-
+    # Build a single flat list of ALL tasks (baseline + AG-T2I)
+    tasks = []
     for seed in SEEDS:
         set_seed(seed)
         skf = StratifiedKFold(n_splits=N_SPLITS, shuffle=True, random_state=seed)
         for fold, (train_idx, test_idx) in enumerate(skf.split(X, y_encoded)):
             # Baseline models
             for m_name, m_obj in models_dict.items():
-                baseline_tasks.append((
+                tasks.append((
                     m_name, m_obj, dataset_name, target_col, seed, fold,
                     train_idx, test_idx, le_classes
                 ))
-            # Collect AG-T2I info for sequential run
-            agt2i_tasks.append((
-                dataset_name, target_col, seed, fold, train_idx, test_idx
-            ))
+            # AG‑T2I models (one task per layout)
+            for layout in agt2i_layouts:
+                tasks.append((
+                    f"AG-T2I-{layout}", None, dataset_name, target_col, seed, fold,
+                    train_idx, test_idx, le_classes
+                ))
 
-    # -------- 1. Run baseline models in parallel --------
-    print(f"Submitting {len(baseline_tasks)} baseline tasks in parallel...")
-    baseline_results = []
-    if baseline_tasks:
-        with parallel_backend('loky', n_jobs=n_workers):
-            baseline_results = Parallel(verbose=10)(
-                delayed(run_model_on_fold)(*task) for task in baseline_tasks
-            )
-
-    # -------- 2. Run AG-T2I tasks SEQUENTIALLY (safe) --------
-    print(f"Running {len(agt2i_tasks) * len(agt2i_layouts)} AG-T2I tasks sequentially...")
-    agt2i_results = []
-    for dataset_name, target_col, seed, fold, train_idx, test_idx in agt2i_tasks:
-        for layout in agt2i_layouts:
-            try:
-                start_t = time.time()
-                result = run_agt2i_fold(
-                    dataset_name, target_col, layout, seed,
-                    np.array(train_idx), np.array(test_idx)
-                )
-                elapsed = time.time() - start_t
-                model_name = f"AG-T2I-{layout}"
-                for subset in ["train", "test"]:
-                    sub = result.get(subset, {})
-                    agt2i_results.append([{
-                        "model": model_name, "seed": seed, "fold": fold, "subset": subset,
-                        "accuracy": sub.get("accuracy", np.nan),
-                        "balanced_accuracy": sub.get("balanced_accuracy", np.nan),
-                        "precision_macro": sub.get("precision_macro", np.nan),
-                        "recall_macro": sub.get("recall_macro", np.nan),
-                        "f1_macro": sub.get("f1_macro", np.nan),
-                        "precision_weighted": np.nan,
-                        "recall_weighted": np.nan,
-                        "f1_weighted": np.nan,
-                        "roc_auc": sub.get("auroc", np.nan),
-                        "time_sec": elapsed
-                    }])
-                print(f"  ✅ {model_name:20s} seed {seed} fold {fold} done in {elapsed:.1f}s")
-            except Exception as e:
-                print(f"  ❌ AG-T2I-{layout:20s} seed {seed} fold {fold} ERROR: {e}")
-                for subset in ["train", "test"]:
-                    agt2i_results.append([{
-                        "model": f"AG-T2I-{layout}", "seed": seed, "fold": fold, "subset": subset,
-                        "accuracy": np.nan, "balanced_accuracy": np.nan,
-                        "precision_macro": np.nan, "recall_macro": np.nan,
-                        "f1_macro": np.nan, "precision_weighted": np.nan,
-                        "recall_weighted": np.nan, "f1_weighted": np.nan,
-                        "roc_auc": np.nan, "time_sec": np.nan
-                    }])
+    # Submit everything at once
+    print(f"Submitting {len(tasks)} tasks (baseline + AG‑T2I) in parallel...")
+    with parallel_backend('loky', n_jobs=n_workers):
+        all_results = Parallel(verbose=10)(
+            delayed(run_model_on_fold)(*task) for task in tasks
+        )
 
     # Flatten results
     flat_results = []
-    for res_list in baseline_results + agt2i_results:
+    for res_list in all_results:
         flat_results.extend(res_list)
 
     results_df = pd.DataFrame(flat_results)
@@ -620,7 +533,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--dataset", type=str, help="Dataset name")
     parser.add_argument("--workers", type=int, default=None,
-                        help="Number of parallel workers (default: all CPUs)")
+                        help="Number of parallel workers (default: all CPUs minus one)")
     args = parser.parse_args()
 
     device = get_torch_device()
@@ -642,7 +555,13 @@ if __name__ == "__main__":
     print("=" * 60)
     print("STARTING BENCHMARK (TABNET CACHING + FULL PARALLELISM + GPU)")
     print("=" * 60)
+
+    total_start = time.time()          # ← start timer
+
     for ds_name, ds_target in datasets_to_run:
         print(f"\n▶ Running {ds_name}...")
         run_dataset_benchmark(ds_name, ds_target, n_workers=args.workers)
+
+    total_elapsed = time.time() - total_start   # ← stop timer
     print("\n🏁 All benchmarks finished.")
+    print(f"⏱️ Total elapsed time: {total_elapsed:.1f}s ({total_elapsed/60:.1f} min)")

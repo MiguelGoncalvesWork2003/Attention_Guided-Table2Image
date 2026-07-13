@@ -61,6 +61,10 @@ MOL_LAYOUT = os.environ.get("MOL_LAYOUT", "step_row").strip()
 
 PROCESSED_DIR = BASE / "data" / "processed" / DATASET
 
+# ---- ISOLATION: respect OUTPUT_DIR for parallel safety ----
+OUTPUT_DIR = Path(os.environ.get("OUTPUT_DIR", str(PROCESSED_DIR)))
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
 TABNET_OUT = (
     BASE
     / "tabnet_fs"
@@ -267,8 +271,8 @@ X_test_img = build_layout_images(X_test)
 print(f"Train image shape: {X_train_img.shape}")
 print(f"Test image shape: {X_test_img.shape}")
 
-np.save(PROCESSED_DIR / "X_train_img.npy", X_train_img)
-np.save(PROCESSED_DIR / "X_test_img.npy", X_test_img)
+np.save(OUTPUT_DIR / "X_train_img.npy", X_train_img)
+np.save(OUTPUT_DIR / "X_test_img.npy", X_test_img)
 
 layout_metadata = {
     "dataset": DATASET,
@@ -285,7 +289,7 @@ layout_metadata = {
 }
 
 metadata_path = (
-    PROCESSED_DIR
+    OUTPUT_DIR
     / f"tabnet_layout_{MOL_LAYOUT}.json"
 )
 
@@ -293,7 +297,7 @@ with open(metadata_path, "w", encoding="utf-8") as f:
     json.dump(layout_metadata, f, indent=2, default=str)
 
 step_df.to_csv(
-    PROCESSED_DIR / "tabnet_spatial_assignment.csv",
+    OUTPUT_DIR / "tabnet_spatial_assignment.csv",
     index=False
 )
 
