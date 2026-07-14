@@ -62,7 +62,7 @@ from running_all_models.models_factory import get_models
 # Configuration
 # ------------------------------------------------------------
 N_SPLITS = 5
-SEEDS = [0, 1, 2, 3, 4]
+SEEDS = [0, 1, 2]
 CACHE_DIR = PROJECT_ROOT / "cache"
 CACHE_DIR.mkdir(exist_ok=True, parents=True)
 
@@ -77,8 +77,8 @@ DATASETS = [
     ("Horse", "Class"),
     ("Gene", "Class"),
     ("Soybean", "Class"),
-    ("Adult", "Class"),
-    ("Bank", "Class"),
+    #("Adult", "Class"),
+    #("Bank", "Class"),
     ("Electricity", "Class"),
     ("Magic04", "Class"),
     ("Poker_Hand", "Class"),
