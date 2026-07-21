@@ -1,8 +1,7 @@
 """
 Benchmark script – parallel models per dataset, full CPU utilisation,
 with caching of TabNet training per fold and explicit GPU support.
-(Fixes: parallel‑safe AG‑T2I splits, top‑level worker functions for joblib,
-        full parallelism for AG‑T2I tasks via OUTPUT_DIR isolation)
+Now loads tuned AG‑T2I hyperparameters from best_params/<dataset>.json.
 """
 
 import os
@@ -10,6 +9,7 @@ import sys
 import json
 import hashlib
 import time
+import shutil
 import pandas as pd
 import numpy as np
 from pathlib import Path
@@ -70,30 +70,35 @@ DATASETS = [
     ("Iris", "Class"),
     ("Diabetes", "Class"),
     ("Cancer", "Class"),
-    ("Glass", "Class"),
-    ("Card", "Class"),
-    ("Thyroid", "Class"),
-    ("Heart", "Class"),
-    ("Horse", "Class"),
-    ("Gene", "Class"),
-    ("Soybean", "Class"),
+    #("Glass", "Class"),
+    #("Card", "Class"),
+    #("Thyroid", "Class"),
+    #("Heart", "Class"),
+    #("Horse", "Class"),
+    #("Gene", "Class"),
+    #("Soybean", "Class"),
     #("Adult", "Class"),
     #("Bank", "Class"),
-    ("Electricity", "Class"),
-    ("Magic04", "Class"),
-    ("Poker_Hand", "Class"),
-    ("Forest_Cover_Type", "Class"),
+    #("Electricity", "Class"),
+    #("Magic04", "Class"),
+    #("Poker_Hand", "Class"),
+    #("Forest_Cover_Type", "Class"),
 ]
 
 # ------------------------------------------------------------
 # Utility: unique fold identifier for caching
 # ------------------------------------------------------------
-def _fold_id(dataset, seed, train_idx, test_idx):
-    """Return a short string that uniquely identifies this fold."""
-    raw = f"{dataset}_seed{seed}_" + hashlib.md5(
+def _fold_id(dataset, seed, train_idx, test_idx, tabnet_params=None):
+    """Return a unique identifier that also captures the tuned TabNet parameters."""
+    base = f"{dataset}_seed{seed}_" + hashlib.md5(
         np.concatenate([train_idx, test_idx]).tobytes()
     ).hexdigest()[:12]
-    return raw
+    if tabnet_params:
+        param_hash = hashlib.md5(
+            json.dumps(tabnet_params, sort_keys=True).encode()
+        ).hexdigest()[:12]
+        base = f"{base}_tabnet{param_hash}"
+    return base
 
 # ------------------------------------------------------------
 # Preprocessing cache for baseline models
@@ -102,7 +107,6 @@ def _cache_path(dataset, seed, fold, kind):
     return CACHE_DIR / dataset / f"seed{seed}" / f"fold{fold}" / f"{kind}"
 
 def _cached_preprocessing(dataset, seed, fold, X_train_raw, X_test_raw):
-    """Return scaled X_train, X_test.  Cached to disk per fold/seed."""
     cache_train = _cache_path(dataset, seed, fold, "X_train.npy")
     cache_test  = _cache_path(dataset, seed, fold, "X_test.npy")
     lock = FileLock(str(cache_train) + ".lock")
@@ -130,40 +134,34 @@ def _cached_preprocessing(dataset, seed, fold, X_train_raw, X_test_raw):
     return X_train, X_test
 
 # ------------------------------------------------------------
-# Helper to move model to GPU if it supports it
+# Helper to move model to GPU
 # ------------------------------------------------------------
 def _move_model_to_device(model):
-    """Move a PyTorch model to the GPU if it has a .to() method."""
     device = get_torch_device()
     if device == 'cuda' and hasattr(model, 'to'):
         model.to(device)
 
 # ------------------------------------------------------------
-# AG‑T2I helper with caching of preprocessing + TabNet per fold
-# (Parallel‑safe: per‑fold split files and unique OUTPUT_DIR)
+# AG‑T2I helper with caching + tuned hyperparameters
 # ------------------------------------------------------------
-def run_agt2i_fold(dataset, target, layout, seed, train_idx, test_idx):
+def run_agt2i_fold(dataset, target, layout, seed, train_idx, test_idx,
+                   tabnet_params=None, cnn_params=None):
     """
     Execute the pipeline for one AG‑T2I layout.
-    Preprocessing + TabNet training are cached per fold.
+    Preprocessing + TabNet training are cached per (fold, tabnet_params).
     Only image building + CNN training are repeated for each layout.
     """
     base = PROJECT_ROOT
-    fold_str = _fold_id(dataset, seed, train_idx, test_idx)
-    cache_dir = CACHE_DIR / "tabnet_cache" / fold_str
-    cache_dir.mkdir(parents=True, exist_ok=True)
-    lock = FileLock(str(cache_dir / ".lock"))
+    fold_str = _fold_id(dataset, seed, train_idx, test_idx, tabnet_params)
 
-    processed_dir = base / "data" / "processed" / dataset
-    processed_dir.mkdir(parents=True, exist_ok=True)
+    # ---- Unique cache directory for this fold's TabNet outputs ----
+    fold_cache_dir = CACHE_DIR / "tabnet_cache" / fold_str
+    fold_cache_dir.mkdir(parents=True, exist_ok=True)
+    lock = FileLock(str(fold_cache_dir / ".lock"))
 
-    # Per‑fold directory for custom split files – prevents parallel overwrites
-    idx_dir = processed_dir / "custom_split" / fold_str
-    idx_dir.mkdir(parents=True, exist_ok=True)
-    train_path = idx_dir / "train_idx.npy"
-    test_path  = idx_dir / "test_idx.npy"
+    # ---- Global processed directory (read‑only source of original preprocessed data) ----
+    global_processed = base / "data" / "processed" / dataset
 
-    # Common environment (without layout/output yet)
     env = {
         "DATASET": dataset,
         "TARGET_COL": target,
@@ -180,22 +178,80 @@ def run_agt2i_fold(dataset, target, layout, seed, train_idx, test_idx):
     if device == 'cuda':
         env["CUDA_VISIBLE_DEVICES"] = "0"
 
-    # -------- Preprocessing + TabNet (cached per fold) --------
-    tabnet_flag = cache_dir / "tabnet_trained.flag"
+    # ---- Ensure global preprocessed data exists (once per dataset) ----
+    global_lock = FileLock(str(global_processed / ".preprocess.lock"))
+    required_global_files = [
+        "X_train.npy", "X_test.npy", "y_train.npy", "y_test.npy",
+        "feature_names.npy"
+    ]
+    with global_lock:
+        missing = [f for f in required_global_files if not (global_processed / f).exists()]
+        if missing:
+            # Run preprocessing on the full dataset (no custom split)
+            env_prep = env.copy()
+            env_prep["PROCESSED_DIR"] = str(global_processed)
+            env_prep["MOL_LAYOUT"] = "step_row"  # layout irrelevant for preprocessing
+            env_prep["EXPERIMENT_ID"] = "global_prep"
+            # Remove any custom split env vars so the default split is used
+            env_prep.pop("TRAIN_IDX_PATH", None)
+            env_prep.pop("TEST_IDX_PATH", None)
+            env_prep.pop("USE_CUSTOM_SPLIT", None)
+            success, _, _ = run_step(
+                name="Global Preprocessing",
+                script_path=base / "preprocessing" / "run_preprocessing.py",
+                env_vars=env_prep,
+            )
+            if not success:
+                raise RuntimeError("Global preprocessing failed")
+
+    # ---- Cached preprocessing + TabNet (once per unique fold/params) ----
+    tabnet_flag = fold_cache_dir / "tabnet_trained.flag"
     with lock:
         if not tabnet_flag.exists():
-            # Write custom split files ONCE for this fold
+            tmp_dir = fold_cache_dir / "tmp_work"
+            tmp_dir.mkdir(parents=True, exist_ok=True)
+
+            # Copy global preprocessed files into tmp_dir
+            for fname in required_global_files:
+                src = global_processed / fname
+                if src.exists():
+                    shutil.copy2(src, tmp_dir / fname)
+            # Also copy feature_names.npy from artifacts if present
+            artifacts_dir = global_processed / "artifacts"
+            if (artifacts_dir / "feature_names.npy").exists():
+                shutil.copy2(artifacts_dir / "feature_names.npy", tmp_dir / "feature_names.npy")
+
+            # Save train/test indices for the custom split
+            idx_dir = tmp_dir / "custom_split"
+            idx_dir.mkdir(exist_ok=True)
+            train_path = idx_dir / "train_idx.npy"
+            test_path  = idx_dir / "test_idx.npy"
             np.save(train_path, train_idx)
             np.save(test_path, test_idx)
 
-            # Use a fixed layout for the cached part (step_row)
-            env["MOL_LAYOUT"] = "step_row"
+            # Update environment to use the temporary directory
+            env["PROCESSED_DIR"] = str(tmp_dir)
+            env["MOL_LAYOUT"] = "step_row"          # arbitrary, needed for preprocessing
             env["EXPERIMENT_ID"] = f"tabnet_cache_{fold_str}"
             env["TRAIN_IDX_PATH"] = str(train_path)
             env["TEST_IDX_PATH"]  = str(test_path)
             env["USE_CUSTOM_SPLIT"] = "true"
-            # No OUTPUT_DIR needed for preprocessing/TabNet – they use global dirs
 
+            # Apply tuned TabNet parameters
+            if tabnet_params:
+                env.update({
+                    "TABNET_N_STEPS": str(tabnet_params.get("n_steps", 6)),
+                    "TABNET_STEP_DIM": str(tabnet_params.get("step_dim", 8)),
+                    "TABNET_ATTN_DIM": str(tabnet_params.get("attn_dim", 8)),
+                    "TABNET_GAMMA": str(tabnet_params.get("gamma", 1.5)),
+                    "TABNET_LAMBDA_SPARSE": str(tabnet_params.get("lambda_sparse", 1e-4)),
+                    "TABNET_MASK_TYPE": tabnet_params.get("mask_type", "sparsemax"),
+                    "TABNET_LEARNING_RATE": str(tabnet_params.get("learning_rate", 2e-2)),
+                    "TABNET_BATCH_SIZE": str(tabnet_params.get("batch_size", 32)),
+                    "TABNET_MAX_EPOCHS": str(tabnet_params.get("max_epochs", 100)),
+                })
+
+            # Run preprocessing on the fold's subset (creates the custom split)
             success, _, _ = run_step(
                 name="Preprocessing",
                 script_path=base / "preprocessing" / "run_preprocessing.py",
@@ -204,6 +260,8 @@ def run_agt2i_fold(dataset, target, layout, seed, train_idx, test_idx):
             if not success:
                 raise RuntimeError("Preprocessing failed for AG‑T2I cache")
 
+            # TabNet training – redirect its output to fold_cache_dir
+            env["OUTPUT_DIR"] = str(fold_cache_dir)
             success, _, _ = run_step(
                 name="TabNet Training",
                 script_path=base / "tabnet_fs" / "train_tabnet.py",
@@ -212,21 +270,53 @@ def run_agt2i_fold(dataset, target, layout, seed, train_idx, test_idx):
             if not success:
                 raise RuntimeError("TabNet training failed for AG‑T2I cache")
 
+            # Copy the produced step assignment back to global processed dir
+            step_csv_src = Path(env["OUTPUT_DIR"]) / "tabnet_output" / "tabnet_step_assignment.csv"
+            if step_csv_src.exists():
+                shutil.copy2(step_csv_src, global_processed / "tabnet_step_assignment.csv")
+
+            # Mark this fold as trained
             tabnet_flag.touch()
 
-    # -------- Now set layout-specific environment and OUTPUT_DIR ----
+    # ---- Prepare isolated output directory for image building & CNN ----
+    output_dir = global_processed / f"{fold_str}_{layout}"
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    # Copy the fold's preprocessed subset (from the cache) into the isolated directory
+    fold_data_dir = fold_cache_dir / "tmp_work"   # where preprocessing saved its output
+    for fname in ["X_train.npy", "X_test.npy", "y_train.npy", "y_test.npy",
+                  "feature_names.npy"]:
+        src = fold_data_dir / fname
+        if src.exists():
+            shutil.copy2(src, output_dir / fname)
+
+    # Copy TabNet step assignment from global (now updated by this fold)
+    step_csv = global_processed / "tabnet_step_assignment.csv"
+    if step_csv.exists():
+        shutil.copy2(step_csv, output_dir / "tabnet_step_assignment.csv")
+
+    # Now set environment for the image building + CNN steps
+    env["PROCESSED_DIR"] = str(output_dir)
+    env["OUTPUT_DIR"] = str(output_dir)
     env["MOL_LAYOUT"] = layout
     env["EXPERIMENT_ID"] = f"{layout}_seed{seed}_{fold_str[:8]}"
-    env["TRAIN_IDX_PATH"] = str(train_path)
-    env["TEST_IDX_PATH"]  = str(test_path)
-    env["USE_CUSTOM_SPLIT"] = "true"
+    env["TRAIN_IDX_PATH"] = str(output_dir / "custom_split" / "train_idx.npy")
+    env["TEST_IDX_PATH"]  = str(output_dir / "custom_split" / "test_idx.npy")
+    env["USE_CUSTOM_SPLIT"] = "true"   # not actually used by image builder
 
-    # Unique output directory for this (seed, fold, layout) combination
-    output_dir = processed_dir / f"{fold_str}_{layout}"
-    output_dir.mkdir(parents=True, exist_ok=True)
-    env["OUTPUT_DIR"] = str(output_dir)
+    # Apply tuned CNN parameters
+    if cnn_params:
+        env.update({
+            "CNN_LEARNING_RATE": str(cnn_params.get("learning_rate", 1e-3)),
+            "CNN_OPTIMIZER": cnn_params.get("optimizer", "adam"),
+            "CNN_EPOCHS": str(cnn_params.get("epochs", 50)),
+            "CNN_BATCH_SIZE": str(cnn_params.get("batch_size", 32)),
+            "CNN_DROPOUT": str(cnn_params.get("dropout", 0.3)),
+        })
 
-    # -------- Image building for this specific layout --------
+    # ---- Image building ----
+    # Point the image builder to the fold's own step assignment CSV
+    env["TABNET_STEP_CSV_PATH"] = str(fold_cache_dir / "tabnet_output" / "tabnet_step_assignment.csv")
     success, _, _ = run_step(
         name="Image Building",
         script_path=base / "image_builder" / "tabnet_image_builder.py",
@@ -235,7 +325,7 @@ def run_agt2i_fold(dataset, target, layout, seed, train_idx, test_idx):
     if not success:
         raise RuntimeError(f"Image building failed for layout {layout}")
 
-    # -------- CNN training --------
+    # ---- CNN training ----
     success, _, _ = run_step(
         name="CNN Training",
         script_path=base / "cnn" / "train_cnn.py",
@@ -244,7 +334,7 @@ def run_agt2i_fold(dataset, target, layout, seed, train_idx, test_idx):
     if not success:
         raise RuntimeError(f"CNN training failed for layout {layout}")
 
-    # -------- CNN evaluation --------
+    # ---- CNN evaluation ----
     success, _, _ = run_step(
         name="CNN Evaluation",
         script_path=base / "cnn" / "evaluate_cnn.py",
@@ -253,18 +343,33 @@ def run_agt2i_fold(dataset, target, layout, seed, train_idx, test_idx):
     if not success:
         raise RuntimeError(f"CNN evaluation failed for layout {layout}")
 
-    # -------- Collect results (from the task’s output_dir) --------
-    results_file = output_dir / f"cnn_evaluation_results_{layout}.json"
+    # ---- Collect results from the subdirectory created by train_cnn / evaluate_cnn ----
+    eval_subdir = output_dir / f"{layout}_seed{seed}"   # <--- THE CRITICAL FIX
+
+    # First try JSON files (preferred)
+    results_file = eval_subdir / f"cnn_evaluation_results_{layout}.json"
     test_metrics = {}
     if results_file.exists():
         with open(results_file, "r") as f:
             test_metrics = json.load(f)
 
-    train_file = output_dir / f"cnn_training_results_{layout}_seed{seed}.json"
+    train_file = eval_subdir / f"cnn_training_results_{layout}_seed{seed}.json"
     train_metrics = {}
     if train_file.exists():
         with open(train_file, "r") as f:
             train_metrics = json.load(f)
+
+    # Fallback: if JSON missing, compute directly from saved prediction files
+    if not test_metrics:
+        y_test_path = eval_subdir / "y_test.npy"
+        y_pred_path = eval_subdir / f"y_test_pred_{layout}.npy"
+        y_prob_path = eval_subdir / f"y_test_prob_{layout}.npy"
+        if y_test_path.exists() and y_pred_path.exists():
+            y_test = np.load(y_test_path)
+            y_pred = np.load(y_pred_path)
+            y_prob = np.load(y_prob_path) if y_prob_path.exists() else None
+            y_test = y_test - y_test.min()
+            test_metrics = compute_extended_metrics(y_test, y_pred, y_prob)
 
     return {
         "layout": layout,
@@ -279,21 +384,21 @@ def run_agt2i_fold(dataset, target, layout, seed, train_idx, test_idx):
         "test": {
             "accuracy": test_metrics.get("accuracy", np.nan),
             "balanced_accuracy": test_metrics.get("balanced_accuracy", np.nan),
-            "f1_macro": test_metrics.get("f1_macro", test_metrics.get("f1_score", np.nan)),
+            "f1_macro": test_metrics.get("f1_macro", np.nan),
             "precision_macro": test_metrics.get("precision_macro", np.nan),
             "recall_macro": test_metrics.get("recall_macro", np.nan),
             "f1_weighted": test_metrics.get("f1_weighted", np.nan),
             "precision_weighted": test_metrics.get("precision_weighted", np.nan),
             "recall_weighted": test_metrics.get("recall_weighted", np.nan),
-            "auroc": test_metrics.get("roc_auc", test_metrics.get("auroc", np.nan)),
+            "auroc": test_metrics.get("roc_auc", np.nan),
         },
     }
 
 # ------------------------------------------------------------
-# Single‑model runner – loads data inside worker to avoid pickling
+# Single‑model runner (updated signature)
 # ------------------------------------------------------------
 def run_model_on_fold(model_name, model_obj, dataset_name, target_col, seed, fold,
-                      train_idx, test_idx, le_classes):
+                      train_idx, test_idx, le_classes, tabnet_params=None, cnn_params=None):
     results = []
     def add_nan_rows():
         for subset in ["train", "test"]:
@@ -326,7 +431,6 @@ def run_model_on_fold(model_name, model_obj, dataset_name, target_col, seed, fol
 
         is_agt2i = model_name.startswith("AG-T2I-")
 
-        # ---- Baseline (non‑AG‑T2I) models ----
         if not is_agt2i:
             if model_obj is None:
                 raise ValueError(f"Model object is None for baseline {model_name}")
@@ -412,12 +516,12 @@ def run_model_on_fold(model_name, model_obj, dataset_name, target_col, seed, fol
 
             print(f"  ✅ {model_name:20s} seed {seed} fold {fold} done in {elapsed:.1f}s")
 
-        # ---- AG‑T2I variants (now fully parallel) ----
-        else:
+        else:  # AG‑T2I variant
             layout = model_name.replace("AG-T2I-", "")
             start_t = time.time()
             result = run_agt2i_fold(
-                dataset_name, target_col, layout, seed, train_idx, test_idx
+                dataset_name, target_col, layout, seed, train_idx, test_idx,
+                tabnet_params, cnn_params
             )
             elapsed = time.time() - start_t
             for subset in ["train", "test"]:
@@ -430,9 +534,9 @@ def run_model_on_fold(model_name, model_obj, dataset_name, target_col, seed, fol
                     "precision_macro": sub.get("precision_macro", np.nan),
                     "recall_macro": sub.get("recall_macro", np.nan),
                     "f1_macro": sub.get("f1_macro", np.nan),
-                    "precision_weighted": np.nan,
-                    "recall_weighted": np.nan,
-                    "f1_weighted": np.nan,
+                    "precision_weighted": sub.get("precision_weighted", np.nan),
+                    "recall_weighted": sub.get("recall_weighted", np.nan),
+                    "f1_weighted": sub.get("f1_weighted", np.nan),
                     "roc_auc": sub.get("auroc", np.nan),
                     "time_sec": elapsed
                 })
@@ -446,9 +550,39 @@ def run_model_on_fold(model_name, model_obj, dataset_name, target_col, seed, fol
 
 
 # ------------------------------------------------------------
-# Benchmark a single dataset – ALL tasks submitted in parallel
+# Load AG‑T2I hyperparameters from best_params/<dataset>.json
 # ------------------------------------------------------------
-def run_dataset_benchmark(dataset_name, target_col, n_workers=None):
+def load_agt2i_params(dataset_name):
+    params_file = Path(__file__).parent / "best_params" / f"{dataset_name}.json"
+    if not params_file.exists():
+        return None
+    with open(params_file, "r") as f:
+        all_params = json.load(f)
+
+    agt2i_params = {}
+    for key, val in all_params.items():
+        if key.startswith("AG-T2I-"):
+            layout = key.replace("AG-T2I-", "")
+            tabnet_keys = {
+                "n_steps", "step_dim", "attn_dim", "gamma", "lambda_sparse",
+                "mask_type", "learning_rate", "batch_size", "max_epochs"
+            }
+            cnn_keys = {"cnn_lr", "cnn_optimizer", "cnn_dropout", "cnn_epochs"}
+            tabnet_params = {}
+            cnn_params = {}
+            for k, v in val.items():
+                if k in tabnet_keys:
+                    tabnet_params[k] = v
+                elif k in cnn_keys:
+                    cnn_params[k.replace("cnn_", "")] = v
+            agt2i_params[layout] = (tabnet_params, cnn_params)
+    return agt2i_params
+
+
+# ------------------------------------------------------------
+# Benchmark a single dataset
+# ------------------------------------------------------------
+def run_dataset_benchmark(dataset_name, target_col, n_workers=None, only_agt2i=False):
     raw_path = PROJECT_ROOT / "data" / "raw" / f"{dataset_name}.csv"
     if not raw_path.exists():
         print(f"❌ Dataset not found: {raw_path}")
@@ -463,46 +597,51 @@ def run_dataset_benchmark(dataset_name, target_col, n_workers=None):
     n_classes = len(le.classes_)
     le_classes = le.classes_
 
-    models_dict = get_tuned_models(dataset_name, n_features, n_classes)
+    models_dict = {}
+    if not only_agt2i:
+        models_dict = get_tuned_models(dataset_name, n_features, n_classes)
+
     agt2i_layouts = [
         "step_row", "packed", "packed_T", "step_sparse", "attention_map"
     ]
 
-    # Build a single flat list of ALL tasks (baseline + AG-T2I)
+    agt2i_params = load_agt2i_params(dataset_name)
+
     tasks = []
     for seed in SEEDS:
         set_seed(seed)
         skf = StratifiedKFold(n_splits=N_SPLITS, shuffle=True, random_state=seed)
         for fold, (train_idx, test_idx) in enumerate(skf.split(X, y_encoded)):
-            # Baseline models
             for m_name, m_obj in models_dict.items():
                 tasks.append((
                     m_name, m_obj, dataset_name, target_col, seed, fold,
-                    train_idx, test_idx, le_classes
+                    train_idx, test_idx, le_classes, None, None
                 ))
-            # AG‑T2I models (one task per layout)
             for layout in agt2i_layouts:
+                tabnet_prm = None
+                cnn_prm = None
+                if agt2i_params and layout in agt2i_params:
+                    tabnet_prm, cnn_prm = agt2i_params[layout]
                 tasks.append((
                     f"AG-T2I-{layout}", None, dataset_name, target_col, seed, fold,
-                    train_idx, test_idx, le_classes
+                    train_idx, test_idx, le_classes, tabnet_prm, cnn_prm
                 ))
 
-    # Submit everything at once
-    print(f"Submitting {len(tasks)} tasks (baseline + AG‑T2I) in parallel...")
+    mode_str = "AG‑T2I only" if only_agt2i else "baseline + AG‑T2I"
+    print(f"Submitting {len(tasks)} tasks ({mode_str}) in parallel...")
     with parallel_backend('loky', n_jobs=n_workers):
         all_results = Parallel(verbose=10)(
             delayed(run_model_on_fold)(*task) for task in tasks
         )
 
-    # Flatten results
     flat_results = []
     for res_list in all_results:
         flat_results.extend(res_list)
 
     results_df = pd.DataFrame(flat_results)
-    results_df.to_csv(out_dir / f"{dataset_name}_raw.csv", index=False)
+    suffix = "_agt2i" if only_agt2i else ""
+    results_df.to_csv(out_dir / f"{dataset_name}_raw{suffix}.csv", index=False)
 
-    # Summary (unchanged)
     summary = []
     for model in results_df["model"].unique():
         sub = results_df[(results_df["model"] == model) & (results_df["subset"] == "test")]
@@ -519,8 +658,9 @@ def run_dataset_benchmark(dataset_name, target_col, n_workers=None):
                     "time_sec": sub["time_sec"].mean()
                 })
     summary_df = pd.DataFrame(summary)
-    summary_df.to_csv(out_dir / f"{dataset_name}_summary.csv", index=False)
-    with open(out_dir / f"{dataset_name}_summary.tex", "w") as f:
+    suffix = "_agt2i" if only_agt2i else ""
+    summary_df.to_csv(out_dir / f"{dataset_name}_summary{suffix}.csv", index=False)
+    with open(out_dir / f"{dataset_name}_summary{suffix}.tex", "w") as f:
         f.write(summary_df.to_latex(index=False, float_format="%.4f"))
 
     print(f"✅ {dataset_name} benchmark complete. Results in {out_dir}\n")
@@ -532,8 +672,10 @@ if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument("--dataset", type=str, help="Dataset name")
-    parser.add_argument("--workers", type=int, default=None,
-                        help="Number of parallel workers (default: all CPUs minus one)")
+    parser.add_argument("--workers", type=int, default=-1,
+                        help="Number of parallel workers (default: all CPUs)")
+    parser.add_argument("--agt2i", action="store_true",
+                        help="Run only AG‑T2I models (skip all baselines)")
     args = parser.parse_args()
 
     device = get_torch_device()
@@ -544,24 +686,23 @@ if __name__ == "__main__":
             (ds, tgt) for ds, tgt in DATASETS if ds == args.dataset
         ]
         if not datasets_to_run:
-            print(
-                f"Dataset '{args.dataset}' not found. "
-                f"Available: {[ds for ds,_ in DATASETS]}"
-            )
+            print(f"Dataset '{args.dataset}' not found. "
+                  f"Available: {[ds for ds,_ in DATASETS]}")
             sys.exit(1)
     else:
         datasets_to_run = DATASETS
 
     print("=" * 60)
-    print("STARTING BENCHMARK (TABNET CACHING + FULL PARALLELISM + GPU)")
+    mode = "AG‑T2I ONLY" if args.agt2i else "BASELINE + AG‑T2I"
+    print(f"STARTING BENCHMARK ({mode})")
     print("=" * 60)
 
-    total_start = time.time()          # ← start timer
-
+    total_start = time.time()
     for ds_name, ds_target in datasets_to_run:
         print(f"\n▶ Running {ds_name}...")
-        run_dataset_benchmark(ds_name, ds_target, n_workers=args.workers)
+        run_dataset_benchmark(ds_name, ds_target, n_workers=args.workers,
+                              only_agt2i=args.agt2i)
 
-    total_elapsed = time.time() - total_start   # ← stop timer
+    total_elapsed = time.time() - total_start
     print("\n🏁 All benchmarks finished.")
     print(f"⏱️ Total elapsed time: {total_elapsed:.1f}s ({total_elapsed/60:.1f} min)")
