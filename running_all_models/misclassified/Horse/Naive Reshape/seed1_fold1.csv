@@ -13,6 +13,8 @@ index,true_label,pred_label,true_label_decoded,pred_label_decoded
 122,1,0,1,0
 160,1,0,1,0
 163,1,0,1,0
+164,2,0,2,0
+233,2,0,2,0
 243,1,0,1,0
 244,2,0,2,0
 247,2,0,2,0

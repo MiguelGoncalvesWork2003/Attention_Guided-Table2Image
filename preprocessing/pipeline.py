@@ -357,7 +357,7 @@ def run_preprocessing_pipeline(config: PreprocessingConfig,
     High-level function to run the preprocessing pipeline.
     """
     import sys
-    print("DEBUG: Columns in loaded dataset:", list(df.columns), file=sys.stderr)   
+    #print("DEBUG: Columns in loaded dataset:", list(df.columns), file=sys.stderr)   
     if config.target_column not in df.columns:
         raise ValueError(f"Target column '{config.target_column}' not found in dataset")
 

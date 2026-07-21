@@ -70,6 +70,7 @@ def main():
 
     # ---- ISOLATION: use OUTPUT_DIR for all file I/O ----
     TASK_OUTPUT_DIR = Path(os.environ.get("OUTPUT_DIR", str(BASE / "data" / "processed" / DATASET)))
+    TASK_OUTPUT_DIR = TASK_OUTPUT_DIR / f"{LAYOUT}_seed{SEED}"
     TASK_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     
     # Model paths
@@ -100,7 +101,7 @@ def main():
     # -------------------------
     # Load test images from the isolated output directory
     X_test_path = TASK_OUTPUT_DIR / "X_test_img.npy"
-    y_test_path = PROCESSED_DIR / "y_test.npy"          # <-- from global processed dir
+    y_test_path = TASK_OUTPUT_DIR / "y_test.npy"
     
     if not X_test_path.exists():
         raise FileNotFoundError(f"Test images not found at {X_test_path}")

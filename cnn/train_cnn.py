@@ -36,6 +36,7 @@ layout projection, ensuring no information is lost or distorted.
   - The saved configuration and model checkpoint enable fully reproducible
     evaluation, which is carried out by `evaluate_cnn.py`.
 """
+
 import numpy as np
 import torch
 import random
@@ -45,13 +46,11 @@ from torch.utils.data import TensorDataset, DataLoader
 from pathlib import Path
 from cnn_model import TabNetCNN
 
-# Add project root to path for shared metrics import
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from running_all_models.metrics import compute_extended_metrics
 
 BASE = Path(__file__).resolve().parent.parent
-
 
 DATASET = os.environ.get("DATASET", "BreastCancer")
 LAYOUT = os.environ.get("MOL_LAYOUT", "step_row")
@@ -59,12 +58,11 @@ SEED = int(os.environ.get("SEED", 42))
 
 # ---- ISOLATION: use OUTPUT_DIR for all file I/O ----
 TASK_OUTPUT_DIR = Path(os.environ.get("OUTPUT_DIR", str(BASE / "data" / "processed" / DATASET)))
+TASK_OUTPUT_DIR = TASK_OUTPUT_DIR / f"{LAYOUT}_seed{SEED}"
 TASK_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 MODEL_DIR = BASE / "cnn" / "cnn_models"   # keep this for backward compat if needed
 MODEL_DIR.mkdir(parents=True, exist_ok=True)
-
-# We will save the checkpoint and config into TASK_OUTPUT_DIR, not MODEL_DIR
 
 LEARNING_RATE = float(os.environ.get("CNN_LEARNING_RATE", 1e-3))
 OPTIMIZER_NAME = os.environ.get("CNN_OPTIMIZER", "adam").lower()
@@ -91,8 +89,8 @@ set_seed(SEED)
 # Load images from the isolated output directory
 X_train = np.load(TASK_OUTPUT_DIR / "X_train_img.npy")
 
-# Labels are in the global processed directory (shared across layouts)
-y_train = np.load(PROCESSED_DIR / "y_train.npy")
+# Labels: after the image builder split, y_train.npy in PROCESSED_DIR is the reduced training set
+y_train = np.load(TASK_OUTPUT_DIR / "y_train.npy")
 
 if X_train.ndim != 4:
     raise ValueError(f"Expected [B,C,H,W], got {X_train.shape}")
@@ -116,10 +114,10 @@ train_loader = DataLoader(
 # Validation data (if exists)
 val_loader = None
 X_val_path = TASK_OUTPUT_DIR / "X_val_img.npy"
-y_val_path = TASK_OUTPUT_DIR / "y_val.npy"
+y_val_path = TASK_OUTPUT_DIR / "y_val.npy"               # FIXED: load from TASK_OUTPUT_DIR
 if X_val_path.exists() and y_val_path.exists():
-    X_val = np.load(TASK_OUTPUT_DIR / "X_val_img.npy")   # if val images exist there
-    y_val = np.load(PROCESSED_DIR / "y_val.npy")
+    X_val = np.load(X_val_path)
+    y_val = np.load(y_val_path)                          # now from the same directory
     y_val = y_val - y_val.min()
     X_val = torch.tensor(X_val, dtype=torch.float32)
     y_val = torch.tensor(y_val, dtype=torch.long)
@@ -158,7 +156,6 @@ scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
     optimizer, mode='min', patience=5, factor=0.5
 )
 
-
 best_val_acc = 0.0
 best_epoch = 0
 
@@ -194,13 +191,13 @@ for epoch in range(EPOCHS):
                 val_correct += (preds == yb).sum().item()
                 val_total += yb.size(0)
         val_acc = val_correct / val_total
-        scheduler.step(1 - val_acc)  # Reduce LR when validation accuracy stops improving
+        scheduler.step(1 - val_acc)
     else:
         val_acc = train_acc  # fallback
 
     print(f"Epoch {epoch+1:3d}/{EPOCHS} | train_acc: {train_acc:.4f} | val_acc: {val_acc:.4f}")
 
-    # Save best model based on validation accuracy (or training if no validation)
+    # Save best model based on validation accuracy
     if val_acc > best_val_acc:
         best_val_acc = val_acc
         best_epoch = epoch + 1
@@ -224,9 +221,8 @@ for epoch in range(EPOCHS):
         print(f"  -> New best model saved (val_acc={best_val_acc:.4f})")
 
 # ------------------------------------------------------------
-# Evaluate on training set using the BEST model (not the final state)
+# Evaluate on training set using the BEST model
 # ------------------------------------------------------------
-# Reload the best checkpoint
 checkpoint = torch.load(MODEL_PATH, map_location=device)
 model.load_state_dict(checkpoint["model_state_dict"])
 model.eval()
@@ -242,9 +238,7 @@ with torch.no_grad():
         all_preds.extend(preds)
         all_labels.extend(yb.cpu().numpy())
 
-# Use the shared metrics function
 train_metrics_dict = compute_extended_metrics(all_labels, all_preds)
-# Prefix keys with "train_"
 train_metrics = {f"train_{k}": v for k, v in train_metrics_dict.items()}
 
 train_results_path = TASK_OUTPUT_DIR / f"cnn_training_results_{LAYOUT}_seed{SEED}.json"

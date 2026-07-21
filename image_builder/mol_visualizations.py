@@ -222,7 +222,7 @@ def save_images_grid(
             fontsize=14,
             weight="bold"
         )
-
+        
         plt.tight_layout()
 
         plt.savefig(

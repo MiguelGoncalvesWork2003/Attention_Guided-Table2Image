@@ -75,6 +75,8 @@ from pathlib import Path
 from typing import Dict, List, Optional, Any, Tuple
 from datetime import datetime
 import concurrent.futures
+from sklearn.model_selection import StratifiedShuffleSplit, StratifiedKFold
+from sklearn.preprocessing import LabelEncoder
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
@@ -268,7 +270,8 @@ class SimplePipelineAPI:
             "FORMAT_STEP_DISTRIBUTION": "true",
             "OUTPUT_DIR": str(output_dir),          # <-- new
         }
-        env.update(self.split_manager.get_split_env_vars(dataset, split_id))
+        if split_id is not None:
+            env.update(self.split_manager.get_split_env_vars(dataset, split_id))
 
         if train_indices is not None and test_indices is not None:
             idx_dir = processed_dir / "custom_split"
@@ -623,10 +626,7 @@ class SimplePipelineAPI:
         print(f"\nSummary: Total={len(df)}, Successful={len(df[df['error'] == ''])}")
         print(f"Mean {metric}: {df[opt_col].mean():.4f}, Best: {df[opt_col].max():.4f}")
 
-    # ------------------------------------------------------------------
-    # Bayesian search (simplified, n_jobs=1)
-    # ------------------------------------------------------------------
-    def bayesian_search(
+    def bayesian_search_with_f1(
         self,
         dataset: str,
         target_column: str,
@@ -638,9 +638,10 @@ class SimplePipelineAPI:
         save_results: bool = True,
         study_name: Optional[str] = None,
         split_id: str = "default",
-        optimization_metric: str = "accuracy",
+        optimization_metric: str = "roc_auc",
         prune: bool = False,
-        n_jobs: int = 1
+        n_jobs: int = 1,
+        cv_folds: int = 3
     ) -> pd.DataFrame:
         if n_jobs != 1:
             print("⚠️ Bayesian search forced to n_jobs=1 (SQLite single‑process).")
@@ -668,6 +669,18 @@ class SimplePipelineAPI:
             )
             print(f"Created new study: {study_name}")
 
+        split_info = self.split_manager.load_split(dataset, split_id)
+        if split_info is None:
+            raise RuntimeError(f"Persistent split '{split_id}' not found for {dataset}")
+
+        train_val_idx = np.concatenate([split_info["train_idx"], split_info["val_idx"]])
+        raw_path = self.raw_data_dir / f"{dataset}.csv"
+        if not raw_path.exists():
+            raise FileNotFoundError(f"Dataset not found: {raw_path}")
+        y_full = pd.read_csv(raw_path)[target_column].values
+        le = LabelEncoder()
+        y_enc_full = le.fit_transform(y_full)
+
         results = []
 
         def objective(trial: Trial) -> float:
@@ -690,36 +703,51 @@ class SimplePipelineAPI:
                 "epochs": trial.suggest_int("cnn_epochs", 30, 100),
             }
 
-            if not quiet:
-                print(f"\n[Trial {trial.number}] Layout={layout}")
+            cv = StratifiedKFold(n_splits=cv_folds, shuffle=True, random_state=seed)
+            fold_roc_auc = []
+            fold_f1 = []
+            for train_fold_idx, val_fold_idx in cv.split(train_val_idx, y_enc_full[train_val_idx]):
+                train_indices = train_val_idx[train_fold_idx]
+                val_indices = train_val_idx[val_fold_idx]
 
-            result = self.run_simple(
-                dataset=dataset,
-                target_column=target_column,
-                mol_layout=layout,
-                tabnet_params=tabnet_params,
-                cnn_params=cnn_params,
-                reuse_existing=False,
-                quiet=quiet,
-                seed=seed + trial.number,
-                split_id=split_id,
-                optimization_metric=optimization_metric
-            )
+                result = self.run_simple(
+                    dataset=dataset,
+                    target_column=target_column,
+                    mol_layout=layout,
+                    tabnet_params=tabnet_params,
+                    cnn_params=cnn_params,
+                    reuse_existing=False,
+                    quiet=True,
+                    seed=seed + trial.number,
+                    split_id=None,
+                    optimization_metric=optimization_metric,
+                    train_indices=train_indices,
+                    test_indices=val_indices,
+                )
 
-            result["search_method"] = "bayesian"
-            result["search_params"] = {**tabnet_params, "layout": layout, **cnn_params}
-            result["trial"] = trial.number
-            results.append(result)
+                if result.get("error"):
+                    fold_roc_auc.append(0.0)
+                    fold_f1.append(0.0)
+                else:
+                    roc_auc_val = result["test"].get("roc_auc", 0.0)
+                    fold_roc_auc.append(roc_auc_val)
+                    f1_val = result["test"].get("f1_macro", 0.0)
+                    fold_f1.append(f1_val)
 
-            metric_value = result.get(optimization_metric, result["test"]["accuracy"])
-            if result.get('error'):
-                if not quiet:
-                    print(f"  ❌ Trial {trial.number} failed: {result['error'][:100]}")
-                return 0.0
-            else:
-                if not quiet:
-                    print(f"  ✅ {optimization_metric}: {metric_value:.4f}")
-                return metric_value
+            mean_roc_auc = float(np.mean(fold_roc_auc)) if fold_roc_auc else 0.0
+            mean_f1 = float(np.mean(fold_f1)) if fold_f1 else 0.0
+
+            trial.set_user_attr("f1_macro", mean_f1)
+
+            results.append({
+                "layout": layout,
+                "accuracy": mean_roc_auc,
+                "error": None,
+                "search_method": "bayesian",
+                "search_params": {**tabnet_params, "layout": layout, **cnn_params},
+                "trial": trial.number,
+            })
+            return mean_roc_auc
 
         study.optimize(
             objective,
@@ -741,13 +769,16 @@ class SimplePipelineAPI:
                     "best_value": study.best_value,
                     "best_params": study.best_params,
                     "best_trial": study.best_trial.number,
-                    "optimization_metric": optimization_metric
+                    "optimization_metric": optimization_metric,
+                    "best_f1_macro": study.best_trial.user_attrs.get("f1_macro", 0.0)
                 }, f, indent=2)
             print(f"\n💾 Results saved to {out_csv} and {best_params_file}")
 
         print(f"\nBest {optimization_metric}: {study.best_value:.4f}")
+        if study.best_trial.user_attrs.get("f1_macro"):
+            print(f"Best CV F1: {study.best_trial.user_attrs['f1_macro']:.4f}")
         return df
-
+        
 def _run_trial_standalone(trial_info, dataset, target_column, base_seed,
                           split_id, optimization_metric, quiet, base_path):
     trial_idx, layout, params = trial_info

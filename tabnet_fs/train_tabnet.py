@@ -105,46 +105,30 @@ class TabNetLearner:
         self.feature_names = None
 
     def setup_output_directory(self) -> Path:
-        """Create output directory."""
-
         base_dir = Path(__file__).resolve().parents[1]
-
-        self.output_dir = (
-            base_dir
-            / "tabnet_fs"
-            / "outputs"
-            / f"output_{self.config.dataset_name}"
-        )
-
+        task_output = os.environ.get("OUTPUT_DIR")
+        if task_output:
+            self.output_dir = Path(task_output) / "tabnet_output"
+        else:
+            self.output_dir = (
+                base_dir / "tabnet_fs" / "outputs" / f"output_{self.config.dataset_name}"
+            )
         self.output_dir.mkdir(parents=True, exist_ok=True)
-
         return self.output_dir
 
-    def load_data(
-        self
-    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, List[str]]:
-        """Load preprocessed data."""
-
+    def load_data(self):
         base_dir = Path(__file__).resolve().parents[1]
-
-        processed_dir = (
-            base_dir
-            / "data"
-            / "processed"
-            / self.config.dataset_name
-        )
+        processed_env = os.environ.get("PROCESSED_DIR")
+        if processed_env:
+            processed_dir = Path(processed_env)
+        else:
+            processed_dir = base_dir / "data" / "processed" / self.config.dataset_name
 
         X_train = np.load(processed_dir / "X_train.npy")
-        X_test = np.load(processed_dir / "X_test.npy")
-
+        X_test  = np.load(processed_dir / "X_test.npy")
         y_train = np.load(processed_dir / "y_train.npy")
-        y_test = np.load(processed_dir / "y_test.npy")
-
-        feature_names = np.load(
-            processed_dir / "feature_names.npy",
-            allow_pickle=True
-        ).tolist()
-
+        y_test  = np.load(processed_dir / "y_test.npy")
+        feature_names = np.load(processed_dir / "feature_names.npy", allow_pickle=True).tolist()
         self.feature_names = feature_names
 
         print("=" * 80)

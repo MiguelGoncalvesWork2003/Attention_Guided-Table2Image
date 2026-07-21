@@ -968,7 +968,7 @@ if st.session_state.get('pipeline_run', False):
                 "y_prob": np.array(eval_results.get("y_prob", [])) if "y_prob" in eval_results else None,
                 "accuracy": eval_results.get("accuracy", 0),
                 "balanced_accuracy": eval_results.get("balanced_accuracy", 0),
-                "f1_score": eval_results.get("f1_score", 0),
+                "f1_score": eval_results.get("f1_macro", 0),
                 "cohen_kappa": eval_results.get("cohen_kappa", 0),
                 "confusion_matrix": np.array(eval_results.get("confusion_matrix", [])),
                 "classification_report": eval_results.get("classification_report", {}),

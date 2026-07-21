@@ -1,4 +1,3 @@
-#tabnet_image_builder.py
 """
 Tabular‑to‑image projection (the **deterministic feature-to-image projection**
 stage of the attention-guided tabular-to-image framework).
@@ -22,9 +21,9 @@ Workflow:
   4. For every sample, place the feature value (or the attention‑importance
      product) at the assigned (row, col) location, producing a single‑channel
      grayscale image of shape `(C=1, H, W)`.
-  5. Save the resulting image arrays (`X_train_img.npy`, `X_test_img.npy`)
-     and a JSON metadata file that records the layout geometry, step groups,
-     and feature ordering.
+  5. Save the resulting image arrays (`X_train_img.npy`, `X_val_img.npy`,
+     `X_test_img.npy`) and a JSON metadata file that records the layout
+     geometry, step groups, and feature ordering.
 
 Key properties:
   - **Fully deterministic:** The same step assignments and layout choice
@@ -53,16 +52,19 @@ from pathlib import Path
 from typing import Dict
 import numpy as np
 import pandas as pd
+from sklearn.model_selection import train_test_split
 
 BASE = Path(__file__).resolve().parents[1]
 
 DATASET = os.environ.get("DATASET", "BreastCancer")
 MOL_LAYOUT = os.environ.get("MOL_LAYOUT", "step_row").strip()
+SEED = int(os.environ.get("SEED", 42))
 
-PROCESSED_DIR = BASE / "data" / "processed" / DATASET
+PROCESSED_DIR = Path(os.environ.get("PROCESSED_DIR", str(BASE / "data" / "processed" / DATASET)))
 
 # ---- ISOLATION: respect OUTPUT_DIR for parallel safety ----
 OUTPUT_DIR = Path(os.environ.get("OUTPUT_DIR", str(PROCESSED_DIR)))
+OUTPUT_DIR = OUTPUT_DIR / f"{MOL_LAYOUT}_seed{SEED}"
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 TABNET_OUT = (
@@ -100,16 +102,14 @@ required_files = [
 ]
 
 for file in required_files:
-
     path = PROCESSED_DIR / file
-
     if not path.exists():
         raise FileNotFoundError(path)
 
-X_train = np.load(PROCESSED_DIR / "X_train.npy")
+X_train_full = np.load(PROCESSED_DIR / "X_train.npy")   # original 105 samples (Iris)
 X_test = np.load(PROCESSED_DIR / "X_test.npy")
 
-y_train = np.load(PROCESSED_DIR / "y_train.npy")
+y_train_full = np.load(PROCESSED_DIR / "y_train.npy")
 y_test = np.load(PROCESSED_DIR / "y_test.npy")
 
 feature_names = np.load(
@@ -117,10 +117,27 @@ feature_names = np.load(
     allow_pickle=True
 ).tolist()
 
-print(f"Train shape: {X_train.shape}")
-print(f"Test shape: {X_test.shape}")
+# =============================================================================
+# Create validation split from the original training set
+# =============================================================================
+VAL_SPLIT = 0.2   # fraction of original training data used for validation
 
-step_csv_path = TABNET_OUT / "tabnet_step_assignment.csv"
+X_train, X_val, y_train, y_val = train_test_split(
+    X_train_full, y_train_full,
+    test_size=VAL_SPLIT,
+    stratify=y_train_full,
+    random_state=SEED
+)
+
+print(f"Original train shape: {X_train_full.shape}")
+print(f"After split: train={X_train.shape}, val={X_val.shape}, test={X_test.shape}")
+
+# Allow the caller to override the path to the step assignment CSV
+step_csv_path = os.environ.get("TABNET_STEP_CSV_PATH")
+if step_csv_path:
+    step_csv_path = Path(step_csv_path)
+else:
+    step_csv_path = TABNET_OUT / "tabnet_step_assignment.csv"
 
 if not step_csv_path.exists():
     raise FileNotFoundError(step_csv_path)
@@ -134,7 +151,6 @@ IMPORTANCE_CUTOFF = 0.005
 if MOL_LAYOUT == "attention_map":
     print("Attention map layout: keeping all features (no importance cutoff)")
     print("Reordering step_df to match feature_names order...")
-    # Ensure both are strings – necessary when dataset column names are integers
     step_df['feature'] = step_df['feature'].astype(str)
     feature_names_str = [str(f) for f in feature_names]
     step_df = step_df.set_index('feature').loc[feature_names_str].reset_index()
@@ -163,9 +179,7 @@ print(f"Image shape: {channels}x{height}x{width}")
 def build_layout_images(
     X: np.ndarray
 ) -> np.ndarray:
-
     n_samples = X.shape[0]
-
     images = np.zeros(
         (n_samples, channels, height, width),
         dtype=np.float32
@@ -177,9 +191,6 @@ def build_layout_images(
     if layout.name == "attention_map":
         weight_matrix = layout.get_weight_matrix()
 
-        # --------------------------------------------------
-        # Robust feature clipping parameters (training only)
-        # --------------------------------------------------
         if build_layout_images.is_training:
             build_layout_images.q01 = np.percentile(X, 1, axis=0)
             build_layout_images.q99 = np.percentile(X, 99, axis=0)
@@ -195,9 +206,6 @@ def build_layout_images(
             sample_vec = X_robust[i].astype(np.float32)
             raw[i] = weight_matrix * sample_vec
 
-        # --------------------------------------------------
-        # Robust image scaling (training statistics only)
-        # --------------------------------------------------
         if build_layout_images.is_training:
             build_layout_images.img_q01 = np.percentile(raw, 1)
             build_layout_images.img_q99 = np.percentile(raw, 99)
@@ -228,52 +236,63 @@ def build_layout_images(
             placed += 1
 
     else:
-
         for step, features in layout.step_groups.items():
-
             for local_rank, feature_name in enumerate(features):
-
                 feature_key = str(feature_name)
-
                 if feature_key not in feature_to_idx:
                     missing += 1
                     continue
-
                 feature_idx = feature_to_idx[feature_key]
-
                 row, col = layout.map_feature(
                     step,
                     local_rank
                 )
-
                 if row >= height or col >= width:
                     continue
-
                 images[:, 0, row, col] = X[:, feature_idx]
-
                 placed += 1
 
     print(f"Placed features: {placed}")
-
     if missing > 0:
         print(f"Missing features: {missing}")
 
     return images
 
+# ------------------------------------------------------------
+# Compute robust scaling statistics on the FULL training set
+# (only relevant for attention_map; harmless for other layouts)
+# ------------------------------------------------------------
+if layout.name == "attention_map":
+    print("\nComputing attention_map robust statistics on full training set...")
+    build_layout_images.is_training = True
+    _ = build_layout_images(X_train_full)   # triggers statistics computation
+    print("Robust statistics captured.")
+
+# ------------------------------------------------------------
+# Build actual train/val/test images WITH is_training=False
+# (so they use the captured statistics)
+# ------------------------------------------------------------
 print("\nBuilding images...")
-
-build_layout_images.is_training = True
-X_train_img = build_layout_images(X_train)
-
 build_layout_images.is_training = False
-X_test_img = build_layout_images(X_test)
+
+X_train_img = build_layout_images(X_train)
+X_val_img   = build_layout_images(X_val)
+X_test_img  = build_layout_images(X_test)
 
 print(f"Train image shape: {X_train_img.shape}")
-print(f"Test image shape: {X_test_img.shape}")
+print(f"Val image shape:   {X_val_img.shape}")
+print(f"Test image shape:  {X_test_img.shape}")
 
+# ---- Save all image arrays and labels ----
 np.save(OUTPUT_DIR / "X_train_img.npy", X_train_img)
+np.save(OUTPUT_DIR / "X_val_img.npy", X_val_img)
 np.save(OUTPUT_DIR / "X_test_img.npy", X_test_img)
 
+np.save(OUTPUT_DIR / "y_train.npy", y_train)   # reduced training labels
+np.save(OUTPUT_DIR / "y_val.npy", y_val)
+np.save(OUTPUT_DIR / "y_test.npy", y_test)     # re‑saved for consistency
+
+# ---- Layout metadata ----
 layout_metadata = {
     "dataset": DATASET,
     "layout_name": MOL_LAYOUT,
@@ -285,13 +304,12 @@ layout_metadata = {
     "step_groups": layout.step_groups,
     "feature_order": list(step_df["feature"]),
     "importance_cutoff": IMPORTANCE_CUTOFF,
-    "generation_timestamp": pd.Timestamp.now().isoformat()
+    "generation_timestamp": pd.Timestamp.now().isoformat(),
+    "validation_split": VAL_SPLIT,
+    "random_seed": SEED
 }
 
-metadata_path = (
-    OUTPUT_DIR
-    / f"tabnet_layout_{MOL_LAYOUT}.json"
-)
+metadata_path = OUTPUT_DIR / f"tabnet_layout_{MOL_LAYOUT}.json"
 
 with open(metadata_path, "w", encoding="utf-8") as f:
     json.dump(layout_metadata, f, indent=2, default=str)
@@ -309,11 +327,16 @@ print(f"Dataset: {DATASET}")
 print(f"Layout: {MOL_LAYOUT}")
 print(f"Image shape: {height}x{width}")
 print(f"Train samples: {len(X_train_img)}")
-print(f"Test samples: {len(X_test_img)}")
+print(f"Val samples:   {len(X_val_img)}")
+print(f"Test samples:  {len(X_test_img)}")
 
 print(f"\nSaved:")
 print(f"  X_train_img.npy")
+print(f"  X_val_img.npy")
 print(f"  X_test_img.npy")
+print(f"  y_train.npy (reduced)")
+print(f"  y_val.npy")
+print(f"  y_test.npy")
 print(f"  {metadata_path.name}")
 
 print("=" * 60)

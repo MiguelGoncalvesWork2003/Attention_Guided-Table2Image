@@ -14,9 +14,9 @@ index,true_label,pred_label,true_label_decoded,pred_label_decoded
 110,2,0,2,0
 116,2,0,2,0
 121,1,0,1,0
-152,1,0,1,0
 164,2,0,2,0
 171,0,1,0,1
+183,0,1,0,1
 223,0,1,0,1
 224,1,0,1,0
 225,2,0,2,0
@@ -26,7 +26,5 @@ index,true_label,pred_label,true_label_decoded,pred_label_decoded
 283,0,1,0,1
 299,0,1,0,1
 303,1,0,1,0
-305,1,0,1,0
 314,1,0,1,0
 326,2,0,2,0
-329,1,0,1,0

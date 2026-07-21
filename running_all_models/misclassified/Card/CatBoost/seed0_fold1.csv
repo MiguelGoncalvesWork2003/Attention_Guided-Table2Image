@@ -1,5 +1,4 @@
 index,true_label,pred_label,true_label_decoded,pred_label_decoded
-23,0,1,0,1
 152,0,1,0,1
 158,1,0,1,0
 215,0,1,0,1
@@ -11,7 +10,7 @@ index,true_label,pred_label,true_label_decoded,pred_label_decoded
 427,1,0,1,0
 493,1,0,1,0
 540,1,0,1,0
-544,0,1,0,1
+563,1,0,1,0
 575,1,0,1,0
 662,1,0,1,0
 677,1,0,1,0

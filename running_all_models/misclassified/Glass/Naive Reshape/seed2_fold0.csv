@@ -6,7 +6,6 @@ index,true_label,pred_label,true_label_decoded,pred_label_decoded
 81,1,0,2,1
 91,1,0,2,1
 106,1,5,2,7
-113,1,0,2,1
 115,1,0,2,1
 119,1,0,2,1
 131,1,5,2,7

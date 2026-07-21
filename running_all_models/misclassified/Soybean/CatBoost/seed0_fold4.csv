@@ -3,4 +3,4 @@ index,true_label,pred_label,true_label_decoded,pred_label_decoded
 219,1,2,1,2
 330,2,1,2,1
 547,1,2,1,2
-590,2,1,2,1
+593,1,0,1,0

@@ -1,7 +1,5 @@
 index,true_label,pred_label,true_label_decoded,pred_label_decoded
-111,5,6,5,6
-135,5,6,5,6
-261,13,14,13,14
-400,5,6,5,6
+76,1,2,1,2
 422,1,2,1,2
 474,1,2,1,2
+651,1,2,1,2

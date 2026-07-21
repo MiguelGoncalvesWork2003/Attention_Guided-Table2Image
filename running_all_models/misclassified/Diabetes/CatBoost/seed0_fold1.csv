@@ -20,7 +20,6 @@ index,true_label,pred_label,true_label_decoded,pred_label_decoded
 301,1,0,1,0
 321,1,0,1,0
 328,1,0,1,0
-337,1,0,1,0
 374,0,1,0,1
 402,1,0,1,0
 406,1,0,1,0

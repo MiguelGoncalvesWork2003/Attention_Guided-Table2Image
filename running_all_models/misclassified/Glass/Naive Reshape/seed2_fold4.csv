@@ -1,11 +1,8 @@
 index,true_label,pred_label,true_label_decoded,pred_label_decoded
 32,0,1,1,2
 77,1,0,2,1
-78,1,0,2,1
-92,1,0,2,1
 98,1,0,2,1
 99,1,0,2,1
-109,1,5,2,7
 117,1,0,2,1
 120,1,0,2,1
 123,1,0,2,1
@@ -20,3 +17,4 @@ index,true_label,pred_label,true_label_decoded,pred_label_decoded
 177,4,0,6,1
 179,4,1,6,2
 189,5,1,7,2
+190,5,1,7,2
