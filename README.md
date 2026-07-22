@@ -1,86 +1,77 @@
 # Attention-Guided Tabular-to-Image Representations
 
-[![Python](https://img.shields.io/badge/Python-3.8%2B-blue.svg)](https://www.python.org/)
+[![Python](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-Transform tabular data into CNN-compatible images using **supervised feature attention** extracted from **TabNet**.
+**AG-T2I** transforms tabular data into CNN-compatible images using **supervised feature attention** learned by TabNet.
 
-The pipeline is fully decoupled:
-
-1. Train a TabNet model to learn feature attention.
-2. Freeze the learned attention masks.
-3. Generate deterministic image layouts from the extracted attention.
-4. Train a lightweight CNN on the generated images.
-
-This repository contains the complete implementation used in the paper:
-
-> **Attention-Guided Tabular-to-Image Representations for Deep Learning**
+The layout is derived deterministically from the model's own attention masks—no iterative optimisation, no stochastic search.
 
 ---
 
-## Overview
+# Pipeline at a Glance
 
-Unlike traditional tabular-to-image methods that rely on iterative optimization or unsupervised feature similarity, **AG-T2I** constructs spatial layouts directly from supervised feature attention learned by TabNet.
+```text
+           Raw Tabular Data
+                  │
+          Preprocessing
+                  │
+   TabNet Training (Frozen)
+                  │
+     Attention Aggregation
+                  │
+ Deterministic Layout Generation
+                  │
+        Image Construction
+                  │
+     Lightweight CNN Training
+                  │
+      Evaluation & Metrics
+```
 
-The proposed framework includes five attention-guided layouts:
-
-- StepRow
-- StepSparse
-- PackedRow
-- PackedCol
-- AttentionMap
-
-as well as two comparison baselines:
-
-- Naive Reshape
-- IGTD-inspired (MDS approximation)
-
-The complete pipeline includes:
-
-- preprocessing
-- TabNet attention extraction
-- image generation
-- CNN training
-- benchmark evaluation
-- statistical analysis
-- interactive visualization
+See the accompanying paper for the complete mathematical formulation.
 
 ---
 
-## Features
+# Features
 
-- Supervised attention-guided image generation
-- Five deterministic AG-T2I layouts
-- Naive and IGTD-inspired baselines
-- Complete preprocessing pipeline
-- Lightweight CNN for image classification
-- Parallel benchmark execution
-- Cached preprocessing and TabNet models
-- Hyperparameter search
-- Streamlit visualization dashboard
-- Reproducible experiments with fixed random seeds
+- Deterministic image generation – the same input always produces the same image.
+- Supervised layouts directly derived from TabNet attention.
+- Five layout strategies:
+  - StepRow
+  - StepSparse
+  - PackedRow
+  - PackedCol
+  - AttentionMap
+- End-to-end benchmarking pipeline with 5-fold cross-validation.
+- Automatic preprocessing (imputation, encoding, scaling).
+- Hyperparameter optimisation (Random Search + Bayesian Optimisation).
+- Statistical significance testing (Wilcoxon, Friedman, Nemenyi).
+- Interactive Streamlit dashboard.
 
 ---
 
-## Repository Structure
+# Repository Structure
+
+The repository is organised around the four stages of the AG-T2I pipeline.
 
 ```text
 .
 ├── api.py                         # Command-line API
 ├── app.py                         # Streamlit dashboard
 ├── preprocessing/                 # Data preprocessing
-├── tabnet_fs/                     # TabNet training and attention extraction
-├── image_builder/                 # Image generation layouts
-├── cnn/                           # CNN architecture and training
+├── tabnet_fs/                     # TabNet training & attention extraction
+├── image_builder/                 # Layouts & image construction
+├── cnn/                           # CNN architecture, training & evaluation
 ├── running_all_models/
-│   ├── benchmark.py               # Benchmark
-│   ├── benchmark_parallel.py      # Parallel benchmark
-│   ├── hyperparameter_search.py   # Hyperparameter optimization
+│   ├── benchmark_parallel.py
+│   ├── benchmark.py
+│   ├── hyperparameter_search.py
 │   ├── models_factory.py
 │   ├── metrics.py
 │   ├── utils.py
 │   └── statistical_tests.py
-├── experiments/
+├── experiments/                   # Output graphs & results
 ├── data/
 │   ├── raw/
 │   └── processed/
@@ -92,9 +83,28 @@ The complete pipeline includes:
 
 ---
 
-# Installation
+# Requirements
 
-Clone the repository:
+- Python **3.10+**
+- PyTorch ≥ 2.0
+- pytorch-tabnet
+- scikit-learn
+- pandas
+- numpy
+- matplotlib
+- seaborn
+- Streamlit *(optional)*
+- Optuna *(optional)*
+
+Install everything with
+
+```bash
+pip install -r requirements.txt
+```
+
+---
+
+# Installation
 
 ```bash
 git clone https://github.com/MiguelGoncalvesWork2003/Attention_Guided-Table2Image.git
@@ -108,7 +118,7 @@ pip install -r requirements.txt
 
 # Quick Start
 
-## Run a single AG-T2I pipeline
+## Run the complete AG-T2I pipeline
 
 ```bash
 python api.py run Cancer --target Class --layout step_row --seed 42
@@ -116,163 +126,144 @@ python api.py run Cancer --target Class --layout step_row --seed 42
 
 This executes:
 
-- preprocessing
-- TabNet training
-- attention extraction
-- image generation
-- CNN training
-- evaluation
+1. Preprocessing
+2. TabNet training
+3. Attention extraction
+4. Layout generation
+5. Image construction
+6. CNN training
+7. Evaluation
 
----
-
-## Launch the dashboard
+## Launch the interactive dashboard
 
 ```bash
 streamlit run app.py
 ```
 
-The dashboard allows visual inspection of:
+The dashboard allows you to inspect:
 
-- learned attention masks
+- attention masks
 - generated layouts
 - feature importance
 - generated images
+- evaluation metrics
 
 ---
 
-### Run the benchmark (all baselines + AG-T2I variants)
+# Layout Strategies
 
-```bash
-python running_all_models/benchmark.py
-```
+| Layout | Description |
+|---------|-------------|
+| **StepRow** | One row per TabNet decision step; features sorted by importance. |
+| **StepSparse** | Fixed-width version of StepRow (10 columns per step). |
+| **PackedRow** | Packs retained features row-major according to global importance. |
+| **PackedCol** | Column-major version of PackedRow. |
+| **AttentionMap** | Complete attention matrix (steps × features); no feature removal. |
 
-Results are saved in:
+The first four layouts discard features whose average attention is below **θ = 0.005**.
 
-```text
-running_all_models/results/
-```
+The **AttentionMap** keeps every feature.
 
 ---
 
-## Parallel benchmark
+# Benchmarks & Statistical Analysis
 
-Run every model using the optimized parallel benchmark:
+The repository includes implementations of:
+
+- XGBoost
+- LightGBM
+- CatBoost
+- Random Forest
+- MLP
+- TabNet
+- FT-Transformer (light)
+- Naive Reshape
+- IGTD-inspired baseline
+- All five AG-T2I layouts
+
+Run the complete benchmark:
 
 ```bash
 python running_all_models/benchmark_parallel.py --dataset Cancer --workers 8
 ```
 
-Features:
+Run statistical significance tests:
 
-- parallel execution
-- preprocessing cache
-- cached TabNet models
-- automatic GPU usage (if available)
+```bash
+python running_all_models/statistical_tests.py
+```
 
-Results are stored in:
+Results are stored in
 
-```text
+```
 running_all_models/results/
 ```
 
 ---
 
-## Hyperparameter search
+# Hyperparameter Optimisation
 
-Search the best parameters for all models:
+Search the best parameters using a 3-fold inner cross-validation.
 
 ```bash
 python running_all_models/hyperparameter_search.py Cancer --target Class --agt2i_trials 20
 ```
 
-Output:
+The AG-T2I variants optimise both TabNet and CNN parameters.
 
-```text
-running_all_models/hyperparameter_results/
+Results are stored in
+
+```
+running_all_models/results_hyperparameter/
 ```
 
 ---
 
-## AG-T2I pipeline search
+# Outputs
 
-Random Search
+Each experiment produces:
 
-```bash
-python api.py random Cancer --target Class --trials 50 --jobs 4
-```
-
-Bayesian Optimization
-
-```bash
-python api.py bayesian Cancer --target Class --trials 50
-```
-
----
-
-# Datasets
-
-Place CSV files inside
-
-```text
-data/raw/
-```
-
-Example datasets:
-
-- Cancer.csv
-- Diabetes.csv
-- Glass.csv
-- Thyroid.csv
-- Card.csv
-
-Each dataset must contain the target column (default: `Class`).
-
-Alternatively specify:
-
-```bash
---target <column_name>
-```
+- Trained TabNet model
+- Frozen attention masks
+- Aggregated attention statistics
+- Layout coordinates
+- Generated image tensors
+- Trained CNN checkpoint
+- Evaluation metrics (CSV + JSON)
+- Diagnostic visualisations
 
 ---
 
-# Reproducing the Paper
+# Reproducibility
 
-Run all experiments:
+All experiments are fully deterministic.
 
-```bash
-cd running_all_models
+- Fixed global seed (42)
+- CUDA deterministic mode
+- Frozen deterministic layouts
+- Fixed stratified splits
 
-python benchmark_parallel.py
-```
+Running the same experiment with the same dataset and seed always produces identical results.
 
-Statistical analysis:
+---
 
-```bash
-python statistical_tests.py
-```
+# Roadmap
 
-The benchmark computes:
-
-- Accuracy
-- Balanced Accuracy
-- Precision
-- Recall
-- F1-score
-- ROC-AUC
-
-using stratified 5-fold cross-validation.
+- [ ] Release pretrained TabNet and CNN models
+- [ ] Add additional benchmark datasets
+- [ ] Publish accompanying paper
+- [ ] Docker support
 
 ---
 
 # Citation
 
-If you use this repository, please cite:
+If you use this repository, please cite
 
 ```bibtex
 @article{bourgingoncalves2026agt2i,
   title={Attention-Guided Tabular-to-Image Representations for Deep Learning},
   author={Bourgin Gonçalves, Miguel and Dutra, Inês},
-  journal={Preprint (under review)},
   year={2026},
   note={Available at https://github.com/MiguelGoncalvesWork2003/Attention_Guided-Table2Image}
 }
@@ -280,6 +271,14 @@ If you use this repository, please cite:
 
 ---
 
-## License
+# Acknowledgements
 
-This project is licensed under the **MIT License**. See the `LICENSE` file for details.
+Developed as part of the MSc in Data Science at the University of Porto under the supervision of Prof. Inês Dutra.
+
+---
+
+# License
+
+This project is licensed under the MIT License.
+
+See the `LICENSE` file for details.

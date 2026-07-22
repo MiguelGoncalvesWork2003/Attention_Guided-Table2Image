@@ -2,6 +2,7 @@
 hyperparameter_search.py – Parallel hyper‑parameter tuning (quiet) +
 automatic sequential benchmark with tuned parameters.
 All models (baselines + AG‑T2I) are tuned concurrently.
+Now uses 3‑fold CV for AG‑T2I as well.
 """
 
 import os
@@ -31,19 +32,20 @@ logging.getLogger("joblib").setLevel(logging.WARNING)
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
+from execution.runner import run_step
 from running_all_models.benchmark_parallel import run_agt2i_fold
 from running_all_models.models_factory import get_models
 
 # ---------- CONFIGURATION ----------
 DATASETS = [
-    ("Iris", "Class"),
+    #("Iris", "Class"),
     #("Diabetes", "Class"),
     #("Cancer", "Class"),
     #("Glass", "Class"),
     #("Card", "Class"),
-    #("Thyroid", "Class"),
-    #("Heart", "Class"),
-    #("Horse", "Class"),
+    ("Thyroid", "Class"),
+    ("Heart", "Class"),
+    ("Horse", "Class"),
     #("Gene", "Class"),
     #("Soybean", "Class"),
     #("Adult", "Class"),
@@ -82,6 +84,39 @@ OUT_DIR.mkdir(exist_ok=True, parents=True)
 
 OPTUNA_DB_DIR = PROJECT_ROOT / "experiments" / "hyperparameter_search"
 OPTUNA_DB_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def ensure_global_preprocessing(dataset_name, target_col):
+    """Run preprocessing once globally, so parallel tasks don't collide."""
+    base = PROJECT_ROOT
+    global_processed = base / "data" / "processed" / dataset_name
+    required_files = [
+        "X_train.npy", "X_test.npy", "y_train.npy", "y_test.npy",
+        "feature_names.npy"
+    ]
+    if all((global_processed / f).exists() for f in required_files):
+        return
+
+    env = {
+        "DATASET": dataset_name,
+        "TARGET_COL": target_col,
+        "SEED": "42",
+        "DROP_THRESHOLD": "0.5",
+        "CAT_MISSING": "explicit",
+        "NUM_MISSING": "median",
+        "SCALING": "standard",
+        "ENCODE_CATEGORICALS": "true",
+        "PROCESSED_DIR": str(global_processed),
+        "MOL_LAYOUT": "step_row",   # irrelevant
+        "EXPERIMENT_ID": "global_prep",
+    }
+    success, _, _ = run_step(
+        name="Global Preprocessing",
+        script_path=base / "preprocessing" / "run_preprocessing.py",
+        env_vars=env,
+    )
+    if not success:
+        raise RuntimeError(f"Global preprocessing failed for {dataset_name}")
 
 
 def load_and_prepare_dataset(dataset_name: str, target_col: str):
@@ -182,10 +217,10 @@ def tune_single_model(dataset_name: str, target_col: str, model_name: str, n_tri
 
 
 def tune_agt2i_layout(dataset_name: str, target_col: str, layout: str, n_trials: int):
-    """Tune a single AG‑T2I layout using a dedicated Optuna study database."""
+    """Tune a single AG‑T2I layout using 3‑fold cross‑validation (like baselines)."""
     X_full, y_full, _, _ = load_and_prepare_dataset(dataset_name, target_col)
-    skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
-    train_idx, test_idx = next(skf.split(X_full, y_full))
+    cv = StratifiedKFold(n_splits=3, shuffle=True, random_state=42)
+    splits = list(cv.split(X_full, y_full))
 
     study_name = f"{dataset_name}_{layout}_bayesian_v2"
     db_path = OPTUNA_DB_DIR / f"optuna_study_{layout}.db"
@@ -214,19 +249,28 @@ def tune_agt2i_layout(dataset_name: str, target_col: str, layout: str, n_trials:
             "dropout": trial.suggest_float("cnn_dropout", 0.1, 0.6),
             "epochs": trial.suggest_int("cnn_epochs", 30, 100),
         }
-        result = run_agt2i_fold(
-            dataset_name, target_col, layout, trial.number % 1000,
-            train_idx, test_idx,
-            tabnet_params, cnn_params
-        )
-        return result["test"].get("auroc", 0.0)
+
+        scores = []
+        for train_idx, test_idx in splits:
+            try:
+                result = run_agt2i_fold(
+                    dataset_name, target_col, layout,
+                    trial.number % 1000,
+                    train_idx, test_idx,
+                    tabnet_params, cnn_params
+                )
+                scores.append(result["test"].get("auroc", 0.0))
+            except Exception:
+                # If the fold fails (e.g. too few samples), return a low score
+                scores.append(0.0)
+        return float(np.mean(scores))
 
     start = time.time()
     study.optimize(objective, n_trials=n_trials, show_progress_bar=False)
     elapsed = time.time() - start
 
     best_roc_auc = study.best_value
-    print(f"✅ AG‑T2I‑{layout:16s} on {dataset_name:20s}  →  best ROC-AUC: {best_roc_auc:.4f}  ({elapsed:.1f}s)")
+    print(f"✅ AG‑T2I‑{layout:16s} on {dataset_name:20s}  →  best CV ROC-AUC: {best_roc_auc:.4f}  ({elapsed:.1f}s)")
 
     return dataset_name, f"AG-T2I-{layout}", study.best_params
 
@@ -239,7 +283,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--dataset", type=str, default=None)
     parser.add_argument("--model", type=str, default=None)
-    parser.add_argument("--workers", type=int, default=None)
+    parser.add_argument("--workers", type=int, default=-1,
+                    help="Number of parallel workers (default: all CPUs)")
     parser.add_argument("--skip-benchmark", action="store_true")
     parser.add_argument("--fresh", action="store_true")
     parser.add_argument("--agt2i-trials", type=int, default=25)
@@ -269,6 +314,14 @@ if __name__ == "__main__":
             shutil.rmtree(cache_tabnet)
             print(f"  Removed {cache_tabnet}")
 
+    # -----------------------------------------------------------------
+    # 0. Global preprocessing (once per dataset, before any parallel work)
+    # -----------------------------------------------------------------
+    print("Ensuring global preprocessed data exists for all datasets...")
+    for ds_name, ds_target in datasets_to_run:
+        ensure_global_preprocessing(ds_name, ds_target)
+        print(f"  ✓ {ds_name}")
+
     should_tune = args.fresh or not all(
         (OUT_DIR / f"{ds_name}.json").exists() for ds_name, _ in datasets_to_run
     )
@@ -278,11 +331,9 @@ if __name__ == "__main__":
         # Merge baseline + AG‑T2I tasks into one list
         tasks = []
         for ds_name, ds_target in datasets_to_run:
-            # Baseline models
             for model_name in MODELS:
                 n_trials = TRIALS.get(model_name, 25)
                 tasks.append(("baseline", ds_name, ds_target, model_name, n_trials))
-            # AG‑T2I layouts
             for layout in AGT2I_LAYOUTS:
                 tasks.append(("agt2i", ds_name, ds_target, layout, args.agt2i_trials))
 

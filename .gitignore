@@ -11,23 +11,26 @@ __pycache__/
 .ipynb_checkpoints/
 
 # Experiments & outputs
-experiments/hyperparameter_search
+experiments/
 tabnet_fs/outputs/
 cnn/cnn_models/
 
 # Results and outputs
-results*/
-running_all_models/results*/
+running_all_models/results_parallel/
+running_all_models/results/
+running_all_models/results_hyperparameter/
 running_all_models/misclassified/
 running_all_models/roc_data/
 running_all_models/best_params/
 
-# Experiments and studies
-experiments/
+# Archive
 archive/
 
 # Optuna studies
 *.db
+*.db-journal
+*.db-wal
+*.db-shm
 
 # OS files
 .DS_Store
@@ -42,8 +45,3 @@ to_csv.py
 debug.py
 catboost_info
 cache/
-
-running_all_models/studies/*.db
-running_all_models/studies/*.db-journal
-running_all_models/studies/*.db-wal
-running_all_models/studies/*.db-shm

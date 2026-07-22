@@ -40,13 +40,12 @@ def get_torch_device():
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-out_dir = Path(
-    os.environ.get(
-        "RESULTS_DIR",
-        PROJECT_ROOT / "running_all_models" / "results_parallel"
-    )
-)
-out_dir.mkdir(parents=True, exist_ok=True)
+def get_out_dir():
+    """Return the results output directory (respecting RESULTS_DIR env var)."""
+    out = Path(os.environ.get("RESULTS_DIR", 
+                             str(PROJECT_ROOT / "running_all_models" / "results_parallel")))
+    out.mkdir(parents=True, exist_ok=True)
+    return out
 
 from sklearn.model_selection import StratifiedKFold
 from sklearn.preprocessing import StandardScaler, LabelEncoder
@@ -68,8 +67,8 @@ CACHE_DIR.mkdir(exist_ok=True, parents=True)
 
 DATASETS = [
     ("Iris", "Class"),
-    ("Diabetes", "Class"),
-    ("Cancer", "Class"),
+    #("Diabetes", "Class"),
+    #("Cancer", "Class"),
     #("Glass", "Class"),
     #("Card", "Class"),
     #("Thyroid", "Class"),
@@ -140,6 +139,41 @@ def _move_model_to_device(model):
     device = get_torch_device()
     if device == 'cuda' and hasattr(model, 'to'):
         model.to(device)
+
+# ------------------------------------------------------------
+# Global preprocessing (to avoid race conditions on Windows)
+# ------------------------------------------------------------
+def ensure_global_preprocessing(dataset_name, target_col):
+    """Run preprocessing once globally before any parallel tasks."""
+    base = PROJECT_ROOT
+    global_processed = base / "data" / "processed" / dataset_name
+    required_files = [
+        "X_train.npy", "X_test.npy", "y_train.npy", "y_test.npy",
+        "feature_names.npy"
+    ]
+    if all((global_processed / f).exists() for f in required_files):
+        return
+
+    env = {
+        "DATASET": dataset_name,
+        "TARGET_COL": target_col,
+        "SEED": "42",
+        "DROP_THRESHOLD": "0.5",
+        "CAT_MISSING": "explicit",
+        "NUM_MISSING": "median",
+        "SCALING": "standard",
+        "ENCODE_CATEGORICALS": "true",
+        "PROCESSED_DIR": str(global_processed),
+        "MOL_LAYOUT": "step_row",   # irrelevant
+        "EXPERIMENT_ID": "global_prep",
+    }
+    success, _, _ = run_step(
+        name="Global Preprocessing",
+        script_path=base / "preprocessing" / "run_preprocessing.py",
+        env_vars=env,
+    )
+    if not success:
+        raise RuntimeError(f"Global preprocessing failed for {dataset_name}")
 
 # ------------------------------------------------------------
 # AG‑T2I helper with caching + tuned hyperparameters
@@ -260,15 +294,64 @@ def run_agt2i_fold(dataset, target, layout, seed, train_idx, test_idx,
             if not success:
                 raise RuntimeError("Preprocessing failed for AG‑T2I cache")
 
+            # ------------------------------------------------------------
+            # Guard: TabNet batch norm needs >1 sample per batch
+            # ------------------------------------------------------------
+            X_train_check = np.load(tmp_dir / "X_train.npy")
+            if X_train_check.shape[0] < 2:
+                tabnet_flag.touch()   # mark as completed to avoid re-run
+                # Return NaN metrics (will be ignored in summary)
+                return {
+                    "layout": layout,
+                    "seed": seed,
+                    "train": {
+                        "accuracy": np.nan,
+                        "balanced_accuracy": np.nan,
+                        "f1_macro": np.nan,
+                        "precision_macro": np.nan,
+                        "recall_macro": np.nan,
+                    },
+                    "test": {
+                        "accuracy": np.nan,
+                        "balanced_accuracy": np.nan,
+                        "f1_macro": np.nan,
+                        "precision_macro": np.nan,
+                        "recall_macro": np.nan,
+                        "f1_weighted": np.nan,
+                        "precision_weighted": np.nan,
+                        "recall_weighted": np.nan,
+                        "auroc": np.nan,
+                    },
+                }
+
             # TabNet training – redirect its output to fold_cache_dir
             env["OUTPUT_DIR"] = str(fold_cache_dir)
-            success, _, _ = run_step(
-                name="TabNet Training",
-                script_path=base / "tabnet_fs" / "train_tabnet.py",
-                env_vars=env,
-            )
-            if not success:
-                raise RuntimeError("TabNet training failed for AG‑T2I cache")
+            try:
+                success, _, _ = run_step(
+                    name="TabNet Training",
+                    script_path=base / "tabnet_fs" / "train_tabnet.py",
+                    env_vars=env,
+                )
+                if not success:
+                    raise RuntimeError("TabNet training failed")
+            except Exception:
+                tabnet_flag.touch()
+                return {
+                    "layout": layout,
+                    "seed": seed,
+                    "train": {
+                        "accuracy": np.nan, "balanced_accuracy": np.nan,
+                        "f1_macro": np.nan, "precision_macro": np.nan,
+                        "recall_macro": np.nan,
+                    },
+                    "test": {
+                        "accuracy": np.nan, "balanced_accuracy": np.nan,
+                        "f1_macro": np.nan, "precision_macro": np.nan,
+                        "recall_macro": np.nan, "f1_weighted": np.nan,
+                        "precision_weighted": np.nan, "recall_weighted": np.nan,
+                        "auroc": np.nan,
+                    },
+                }
 
             # Copy the produced step assignment back to global processed dir
             step_csv_src = Path(env["OUTPUT_DIR"]) / "tabnet_output" / "tabnet_step_assignment.csv"
@@ -315,7 +398,6 @@ def run_agt2i_fold(dataset, target, layout, seed, train_idx, test_idx,
         })
 
     # ---- Image building ----
-    # Point the image builder to the fold's own step assignment CSV
     env["TABNET_STEP_CSV_PATH"] = str(fold_cache_dir / "tabnet_output" / "tabnet_step_assignment.csv")
     success, _, _ = run_step(
         name="Image Building",
@@ -344,7 +426,7 @@ def run_agt2i_fold(dataset, target, layout, seed, train_idx, test_idx,
         raise RuntimeError(f"CNN evaluation failed for layout {layout}")
 
     # ---- Collect results from the subdirectory created by train_cnn / evaluate_cnn ----
-    eval_subdir = output_dir / f"{layout}_seed{seed}"   # <--- THE CRITICAL FIX
+    eval_subdir = output_dir / f"{layout}_seed{seed}"
 
     # First try JSON files (preferred)
     results_file = eval_subdir / f"cnn_evaluation_results_{layout}.json"
@@ -359,7 +441,7 @@ def run_agt2i_fold(dataset, target, layout, seed, train_idx, test_idx,
         with open(train_file, "r") as f:
             train_metrics = json.load(f)
 
-    # Fallback: if JSON missing, compute directly from saved prediction files
+    # Fallback: compute directly from saved prediction files
     if not test_metrics:
         y_test_path = eval_subdir / "y_test.npy"
         y_pred_path = eval_subdir / f"y_test_pred_{layout}.npy"
@@ -450,6 +532,8 @@ def run_model_on_fold(model_name, model_obj, dataset_name, target_col, seed, fol
 
             start_t = time.time()
             if model_name == "TabNet":
+                if len(y_train_fold) < 2:
+                    raise ValueError("Training set too small for TabNet (batch norm requires >1 sample)")
                 model_obj.fit(
                     X_train, y_train_fold,
                     eval_set=[(X_test, y_test_fold)],
@@ -492,7 +576,7 @@ def run_model_on_fold(model_name, model_obj, dataset_name, target_col, seed, fol
                     columns=[f"prob_class_{i}" for i in range(y_proba_test.shape[1])]
                 )
                 roc_df["true_label"] = y_test_fold
-                roc_out = out_dir / "roc_data" / dataset_name / model_name
+                roc_out = get_out_dir() / "roc_data" / dataset_name / model_name
                 roc_out.mkdir(parents=True, exist_ok=True)
                 roc_df.to_csv(roc_out / f"seed{seed}_fold{fold}.csv", index=False)
 
@@ -588,6 +672,9 @@ def run_dataset_benchmark(dataset_name, target_col, n_workers=None, only_agt2i=F
         print(f"❌ Dataset not found: {raw_path}")
         return None, None
 
+    # ---- Global preprocessing (once, before any parallel task) ----
+    ensure_global_preprocessing(dataset_name, target_col)
+
     df = pd.read_csv(raw_path)
     X = df.drop(columns=[target_col])
     y = df[target_col]
@@ -640,7 +727,7 @@ def run_dataset_benchmark(dataset_name, target_col, n_workers=None, only_agt2i=F
 
     results_df = pd.DataFrame(flat_results)
     suffix = "_agt2i" if only_agt2i else ""
-    results_df.to_csv(out_dir / f"{dataset_name}_raw{suffix}.csv", index=False)
+    results_df.to_csv(get_out_dir() / f"{dataset_name}_raw{suffix}.csv", index=False)
 
     summary = []
     for model in results_df["model"].unique():
@@ -659,11 +746,11 @@ def run_dataset_benchmark(dataset_name, target_col, n_workers=None, only_agt2i=F
                 })
     summary_df = pd.DataFrame(summary)
     suffix = "_agt2i" if only_agt2i else ""
-    summary_df.to_csv(out_dir / f"{dataset_name}_summary{suffix}.csv", index=False)
-    with open(out_dir / f"{dataset_name}_summary{suffix}.tex", "w") as f:
+    summary_df.to_csv(get_out_dir() / f"{dataset_name}_summary{suffix}.csv", index=False)
+    with open(get_out_dir() / f"{dataset_name}_summary{suffix}.tex", "w") as f:
         f.write(summary_df.to_latex(index=False, float_format="%.4f"))
 
-    print(f"✅ {dataset_name} benchmark complete. Results in {out_dir}\n")
+    print(f"✅ {dataset_name} benchmark complete. Results in {get_out_dir()}\n")
     return results_df, summary_df
 
 
