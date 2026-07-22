@@ -14,9 +14,20 @@ __pycache__/
 experiments/hyperparameter_search
 tabnet_fs/outputs/
 cnn/cnn_models/
-#running_all_models/results/
+
+# Results and outputs
+results*/
+running_all_models/results*/
 running_all_models/misclassified/
 running_all_models/roc_data/
+running_all_models/best_params/
+
+# Experiments and studies
+experiments/
+archive/
+
+# Optuna studies
+*.db
 
 # OS files
 .DS_Store
