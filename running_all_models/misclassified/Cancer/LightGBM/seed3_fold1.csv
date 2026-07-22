@@ -1,9 +1,0 @@
-index,true_label,pred_label,true_label_decoded,pred_label_decoded
-40,0,1,2,4
-57,1,0,4,2
-196,0,1,2,4
-415,0,1,2,4
-434,0,1,2,4
-489,1,0,4,2
-494,0,1,2,4
-657,0,1,2,4
