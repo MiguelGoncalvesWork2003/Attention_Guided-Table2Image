@@ -1,7 +1,7 @@
 """
 Benchmark script – parallel models per dataset, full CPU utilisation,
 with caching of TabNet training per fold and explicit GPU support.
-Now loads tuned AG‑T2I hyperparameters from best_params/<dataset>.json.
+Now supports --model filter for single model benchmarking.
 """
 
 import os
@@ -517,6 +517,7 @@ def run_model_on_fold(model_name, model_obj, dataset_name, target_col, seed, fol
             if model_obj is None:
                 raise ValueError(f"Model object is None for baseline {model_name}")
 
+            # IGTD does not need scaling (its mapper does min‑max internally)
             model_needs_scaling = model_name in [
                 "FT-Transformer (lite)", "IGTD-inspired", "Naive Reshape", "TabNet"
             ]
@@ -664,9 +665,9 @@ def load_agt2i_params(dataset_name):
 
 
 # ------------------------------------------------------------
-# Benchmark a single dataset
+# Benchmark a single dataset (with model_filter support)
 # ------------------------------------------------------------
-def run_dataset_benchmark(dataset_name, target_col, n_workers=None, only_agt2i=False):
+def run_dataset_benchmark(dataset_name, target_col, n_workers=None, only_agt2i=False, model_filter=None):
     raw_path = PROJECT_ROOT / "data" / "raw" / f"{dataset_name}.csv"
     if not raw_path.exists():
         print(f"❌ Dataset not found: {raw_path}")
@@ -684,26 +685,66 @@ def run_dataset_benchmark(dataset_name, target_col, n_workers=None, only_agt2i=F
     n_classes = len(le.classes_)
     le_classes = le.classes_
 
+    # --- Load baseline models (or empty if only_agt2i) ---
     models_dict = {}
     if not only_agt2i:
         models_dict = get_tuned_models(dataset_name, n_features, n_classes)
 
+    # Default AG‑T2I layouts
     agt2i_layouts = [
         "step_row", "packed", "packed_T", "step_sparse", "attention_map"
     ]
-
     agt2i_params = load_agt2i_params(dataset_name)
 
+    # --- Apply model_filter if provided ---
+    if model_filter is not None:
+        if isinstance(model_filter, str):
+            model_filter = [model_filter]    # normalise to list
+
+        baseline_models = []
+        agt2i_selected = []
+        for m in model_filter:
+            if m.startswith("AG-T2I-"):
+                layout = m.replace("AG-T2I-", "")
+                if layout not in agt2i_layouts:
+                    print(f"Unknown AG‑T2I layout: {layout}")
+                    return None, None
+                agt2i_selected.append(layout)
+            else:
+                if m not in models_dict:
+                    print(f"Model '{m}' not found in tuned models for {dataset_name}. "
+                          f"Available: {list(models_dict.keys())}")
+                    return None, None
+                baseline_models.append(m)
+
+        # Keep only requested baselines
+        if baseline_models:
+            models_dict = {m: models_dict[m] for m in baseline_models}
+        else:
+            models_dict = {}
+
+        # Keep only requested AG‑T2I layouts
+        if agt2i_selected:
+            agt2i_layouts = agt2i_selected
+        else:
+            agt2i_layouts = []
+
+        # Determine the only_agt2i flag
+        only_agt2i = (len(models_dict) == 0 and len(agt2i_layouts) > 0)
+
+    # --- Build task list ---
     tasks = []
     for seed in SEEDS:
         set_seed(seed)
         skf = StratifiedKFold(n_splits=N_SPLITS, shuffle=True, random_state=seed)
         for fold, (train_idx, test_idx) in enumerate(skf.split(X, y_encoded)):
+            # Baseline models
             for m_name, m_obj in models_dict.items():
                 tasks.append((
                     m_name, m_obj, dataset_name, target_col, seed, fold,
                     train_idx, test_idx, le_classes, None, None
                 ))
+            # AG‑T2I layouts
             for layout in agt2i_layouts:
                 tabnet_prm = None
                 cnn_prm = None
@@ -714,7 +755,13 @@ def run_dataset_benchmark(dataset_name, target_col, n_workers=None, only_agt2i=F
                     train_idx, test_idx, le_classes, tabnet_prm, cnn_prm
                 ))
 
+    if not tasks:
+        print("No tasks to run.")
+        return None, None
+
     mode_str = "AG‑T2I only" if only_agt2i else "baseline + AG‑T2I"
+    if model_filter:
+        mode_str = f"model={model_filter}"
     print(f"Submitting {len(tasks)} tasks ({mode_str}) in parallel...")
     with parallel_backend('loky', n_jobs=n_workers):
         all_results = Parallel(verbose=10)(
@@ -727,6 +774,12 @@ def run_dataset_benchmark(dataset_name, target_col, n_workers=None, only_agt2i=F
 
     results_df = pd.DataFrame(flat_results)
     suffix = "_agt2i" if only_agt2i else ""
+    if model_filter:
+        if isinstance(model_filter, list):
+            safe_name = '_'.join(model_filter)
+        else:
+            safe_name = model_filter
+        suffix = f"_{safe_name}"
     results_df.to_csv(get_out_dir() / f"{dataset_name}_raw{suffix}.csv", index=False)
 
     summary = []
@@ -745,7 +798,6 @@ def run_dataset_benchmark(dataset_name, target_col, n_workers=None, only_agt2i=F
                     "time_sec": sub["time_sec"].mean()
                 })
     summary_df = pd.DataFrame(summary)
-    suffix = "_agt2i" if only_agt2i else ""
     summary_df.to_csv(get_out_dir() / f"{dataset_name}_summary{suffix}.csv", index=False)
     with open(get_out_dir() / f"{dataset_name}_summary{suffix}.tex", "w") as f:
         f.write(summary_df.to_latex(index=False, float_format="%.4f"))
@@ -759,6 +811,8 @@ if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument("--dataset", type=str, help="Dataset name")
+    parser.add_argument("--model", nargs='+', default=None,
+                    help="One or more model names (space separated).")
     parser.add_argument("--workers", type=int, default=-1,
                         help="Number of parallel workers (default: all CPUs)")
     parser.add_argument("--agt2i", action="store_true",
@@ -780,7 +834,13 @@ if __name__ == "__main__":
         datasets_to_run = DATASETS
 
     print("=" * 60)
-    mode = "AG‑T2I ONLY" if args.agt2i else "BASELINE + AG‑T2I"
+    if args.model:
+        if args.model:
+            mode = f"MODELS: {', '.join(args.model)}"
+    elif args.agt2i:
+        mode = "AG‑T2I ONLY"
+    else:
+        mode = "BASELINE + AG‑T2I"
     print(f"STARTING BENCHMARK ({mode})")
     print("=" * 60)
 
@@ -788,7 +848,7 @@ if __name__ == "__main__":
     for ds_name, ds_target in datasets_to_run:
         print(f"\n▶ Running {ds_name}...")
         run_dataset_benchmark(ds_name, ds_target, n_workers=args.workers,
-                              only_agt2i=args.agt2i)
+                              only_agt2i=args.agt2i, model_filter=args.model)
 
     total_elapsed = time.time() - total_start
     print("\n🏁 All benchmarks finished.")

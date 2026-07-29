@@ -38,16 +38,16 @@ from running_all_models.models_factory import get_models
 
 # ---------- CONFIGURATION ----------
 DATASETS = [
-    #("Iris", "Class"),
-    #("Diabetes", "Class"),
-    #("Cancer", "Class"),
-    #("Glass", "Class"),
-    #("Card", "Class"),
+    ("Iris", "Class"),
+    ("Diabetes", "Class"),
+    ("Cancer", "Class"),
+    ("Glass", "Class"),
+    ("Card", "Class"),
     ("Thyroid", "Class"),
     ("Heart", "Class"),
     ("Horse", "Class"),
-    #("Gene", "Class"),
-    #("Soybean", "Class"),
+    ("Gene", "Class"),
+    ("Soybean", "Class"),
     #("Adult", "Class"),
     #("Bank", "Class"),
     #("Electricity", "Class"),
@@ -63,17 +63,21 @@ MODELS = [
     "TabNet",
     "FT-Transformer (lite)",
     "IGTD-inspired",
+    "IGTD",
     "Naive Reshape",
+    "DeepInsight",       
 ]
 
 TRIALS = {
     "XGBoost": 25,
     "LightGBM": 25,
     "CatBoost": 25,
-    "TabNet": 25,
-    "FT-Transformer (lite)": 25,
+    "TabNet": 10,
+    "FT-Transformer (lite)": 15,
     "IGTD-inspired": 25,
+    "IGTD": 25,
     "Naive Reshape": 25,
+    "DeepInsight": 25,        # ← added
 }
 
 AGT2I_TRIALS = 25
@@ -136,7 +140,9 @@ def load_and_prepare_dataset(dataset_name: str, target_col: str):
 def tune_single_model(dataset_name: str, target_col: str, model_name: str, n_trials: int):
     X_full, y_full, n_features, n_classes = load_and_prepare_dataset(dataset_name, target_col)
 
-    if model_name in ["TabNet", "FT-Transformer (lite)", "IGTD-inspired", "Naive Reshape"]:
+    # Exclude models that handle normalization internally (IGTD, DeepInsight)
+    if model_name in ["TabNet", "FT-Transformer (lite)", "IGTD-inspired", "Naive Reshape"] \
+            and model_name not in ("IGTD", "DeepInsight"):
         scaler = StandardScaler()
         X_full = scaler.fit_transform(X_full)
 
@@ -192,12 +198,12 @@ def tune_single_model(dataset_name: str, target_col: str, model_name: str, n_tri
             "batch_size": [16, 32],
             "epochs": [50, 80],
         }
-    elif model_name in ["IGTD-inspired", "Naive Reshape"]:
-        param_dist = {
-            "epochs": [50, 80],
-            "lr": loguniform(1e-4, 1e-3),
-            "dropout": uniform(0.1, 0.4),
-        }
+    elif model_name in ["IGTD-inspired", "Naive Reshape", "IGTD", "DeepInsight"]:
+            param_dist = {
+                "epochs": [50, 80, 100, 120],  
+                "lr": loguniform(1e-4, 2e-3),          
+                "dropout": uniform(0.0, 0.5),           
+            }
     else:
         return dataset_name, model_name, {}
 
@@ -265,9 +271,20 @@ def tune_agt2i_layout(dataset_name: str, target_col: str, layout: str, n_trials:
                 scores.append(0.0)
         return float(np.mean(scores))
 
-    start = time.time()
-    study.optimize(objective, n_trials=n_trials, show_progress_bar=False)
-    elapsed = time.time() - start
+    completed = len(
+        study.get_trials(states=(optuna.trial.TrialState.COMPLETE,))
+    )
+
+    remaining = max(0, n_trials - completed)
+
+    if remaining > 0:
+        print(f"AG-T2I-{layout}: {completed}/{n_trials} trials completed. Running {remaining} more...")
+        start = time.time()
+        study.optimize(objective, n_trials=remaining, show_progress_bar=False)
+        elapsed = time.time() - start
+    else:
+        print(f"AG-T2I-{layout}: already has {completed} completed trials. Skipping.")
+        elapsed = 0
 
     best_roc_auc = study.best_value
     print(f"✅ AG‑T2I‑{layout:16s} on {dataset_name:20s}  →  best CV ROC-AUC: {best_roc_auc:.4f}  ({elapsed:.1f}s)")
@@ -282,7 +299,8 @@ if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument("--dataset", type=str, default=None)
-    parser.add_argument("--model", type=str, default=None)
+    parser.add_argument("--model", nargs='+', default=None,
+                    help="One or more model names (space separated).")
     parser.add_argument("--workers", type=int, default=-1,
                     help="Number of parallel workers (default: all CPUs)")
     parser.add_argument("--skip-benchmark", action="store_true")
@@ -328,17 +346,31 @@ if __name__ == "__main__":
     best_per_dataset = {}
 
     if should_tune:
-        # Merge baseline + AG‑T2I tasks into one list
         tasks = []
-        for ds_name, ds_target in datasets_to_run:
-            for model_name in MODELS:
-                n_trials = TRIALS.get(model_name, 25)
-                tasks.append(("baseline", ds_name, ds_target, model_name, n_trials))
-            for layout in AGT2I_LAYOUTS:
-                tasks.append(("agt2i", ds_name, ds_target, layout, args.agt2i_trials))
-
-        n_jobs = args.workers if args.workers is not None else -1
-        print(f"Tuning {len(tasks)} models (baseline + AG‑T2I) in parallel with {n_jobs if n_jobs > 0 else 'all'} workers...\n")
+        if args.model:
+            for m in args.model:
+                if m.startswith("AG-T2I-"):
+                    layout = m.replace("AG-T2I-", "")
+                    if layout not in AGT2I_LAYOUTS:
+                        print(f"Unknown AG‑T2I layout: {layout}")
+                        sys.exit(1)
+                    for ds_name, ds_target in datasets_to_run:
+                        tasks.append(("agt2i", ds_name, ds_target, layout, args.agt2i_trials))
+                else:
+                    if m not in MODELS:
+                        print(f"Unknown model: {m}")
+                        sys.exit(1)
+                    for ds_name, ds_target in datasets_to_run:
+                        n_trials = TRIALS.get(m, 25)
+                        tasks.append(("baseline", ds_name, ds_target, m, n_trials))
+        else:
+            # No filter – add everything
+            for ds_name, ds_target in datasets_to_run:
+                for model_name in MODELS:
+                    n_trials = TRIALS.get(model_name, 25)
+                    tasks.append(("baseline", ds_name, ds_target, model_name, n_trials))
+                for layout in AGT2I_LAYOUTS:
+                    tasks.append(("agt2i", ds_name, ds_target, layout, args.agt2i_trials))
 
         def tune_task(task):
             typ, ds, tgt, name_or_layout, trials = task
@@ -347,8 +379,10 @@ if __name__ == "__main__":
             else:  # agt2i
                 return tune_agt2i_layout(ds, tgt, name_or_layout, trials)
 
+        # --- Fix: define n_jobs before Parallel ---
+        n_jobs = args.workers   # -1 means use all CPUs (default)
         start_time = time.time()
-        all_results = Parallel(n_jobs=n_jobs, verbose=0)(
+        all_results = Parallel(n_jobs=n_jobs, backend='loky', verbose=0)(
             delayed(tune_task)(task) for task in tasks
         )
         elapsed = time.time() - start_time
@@ -386,7 +420,8 @@ if __name__ == "__main__":
         bench_start = time.time()
         for ds_name, ds_target in datasets_to_run:
             print(f"\n▶ Benchmarking {ds_name}...")
-            run_dataset_benchmark(ds_name, ds_target, n_workers=args.workers)
+            run_dataset_benchmark(ds_name, ds_target, n_workers=args.workers,
+                                  model_filter=args.model)
         bench_elapsed = time.time() - bench_start
         print(f"\n🏁 Benchmark finished in {bench_elapsed/60:.1f} min.")
         print(f"Results saved to: {hyper_results_dir}")

@@ -1,7 +1,7 @@
 """
 Factory that returns all baseline classifiers for the tabular‑to‑image
-comparison. Includes tree ensembles, TabNet, FT‑Transformer, and two CNN‑based
-tabular‑to‑image baselines (IGTD‑inspired and naive reshape).
+comparison. Includes tree ensembles, TabNet, FT‑Transformer, and CNN‑based
+tabular‑to‑image baselines (IGTD, IGTD‑inspired, DeepInsight, naive reshape).
 Extended with get_model_from_params for hyperparameter tuning.
 """
 
@@ -17,21 +17,37 @@ from xgboost import XGBClassifier
 from lightgbm import LGBMClassifier
 from catboost import CatBoostClassifier
 from pytorch_tabnet.tab_model import TabNetClassifier
-
+from sklearn.manifold import TSNE
 import sys
+import os
 from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 from cnn.cnn_model import TabNetCNN
 
+import tempfile
+import shutil
+
+# ---------- IGTD imports ----------
+IGTD_PATH = PROJECT_ROOT / "external" / "IGTD" / "Scripts"
+sys.path.append(str(IGTD_PATH))
+
+igtf_path = IGTD_PATH / "IGTD_Functions.py"
+if not igtf_path.exists():
+    raise FileNotFoundError(f"IGTD_Functions.py not found at {igtf_path}")
+
+from IGTD_Functions import table_to_image
+
+# ---------- DeepInsight import ----------
+from pyDeepInsight import ImageTransformer
+
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
-# ---------- FT-Transformer ----------
+# -------------------------------------------------------------------
+# FT-Transformer
+# -------------------------------------------------------------------
 class FTTransformerNative(nn.Module):
-    """
-    Lightweight FT‑Transformer for tabular classification.
-    Simplified but closer to the original architecture.
-    """
+    """Lightweight FT‑Transformer for tabular classification."""
     def __init__(self, n_features, n_classes, d_token=32, n_heads=4, n_blocks=2, dropout=0.1):
         super().__init__()
         self.n_features = n_features
@@ -66,7 +82,6 @@ class FTTransformerNative(nn.Module):
 
 
 class FTTransformerWrapper(BaseEstimator, ClassifierMixin):
-    # Extended to accept all tunable hyperparameters
     def __init__(self, n_features, n_classes, epochs=50, batch_size=32, lr=1e-3,
                  d_token=32, n_heads=4, n_blocks=2, dropout=0.1):
         self.n_features = n_features
@@ -120,14 +135,53 @@ class FTTransformerWrapper(BaseEstimator, ClassifierMixin):
             probs = torch.softmax(logits, dim=1)
         return probs.cpu().numpy()
 
+# -------------------------------------------------------------------
+# DeepInsight mapper
+# -------------------------------------------------------------------
+class DeepInsightMapper:
+    """
+    Uses pyDeepInsight's ImageTransformer with t‑SNE to create a 2D feature
+    layout. Outputs 1‑channel grayscale images.
+    """
+    def __init__(self, n_features, perplexity=None, random_state=42):
+        self.n_features = n_features
+        self.side = int(np.ceil(np.sqrt(n_features)))
+        # t‑SNE perplexity must be < n_features
+        if perplexity is None:
+            perplexity = min(30, self.n_features - 1)
+        self.perplexity = max(1, perplexity)
+        self.random_state = random_state
+        self.transformer = None
 
-# ---------- IGTD‑inspired mapper ----------
+    def fit(self, X):
+        X = np.asarray(X, dtype=np.float32)
+        tsne = TSNE(
+            perplexity=self.perplexity,
+            random_state=self.random_state
+        )
+        # NO cmap – we'll convert to grayscale manually
+        self.transformer = ImageTransformer(
+            feature_extractor=tsne,
+            pixels=(self.side, self.side)
+        )
+        self.transformer.fit(X)
+        return self
+
+    def transform(self, X):
+        X = np.asarray(X, dtype=np.float32)
+        images = self.transformer.transform(X)          # likely (N, H, W, 3)
+
+        # Convert RGB to grayscale by averaging colour channels
+        if images.ndim == 4 and images.shape[-1] == 3:  # (N, H, W, 3)
+            images = np.mean(images, axis=-1)           # → (N, H, W)
+        # Now add channel dimension → (N, 1, H, W)
+        return images[:, None, :, :]
+
+# -------------------------------------------------------------------
+# IGTD-inspired mapper (MDS)
+# -------------------------------------------------------------------
 class IGTD_Mapper:
-    """
-    Lightweight IGTD‑inspired feature mapper.
-    Features with similar correlation structure are placed near each other
-    on a 2D grid using MDS projection.
-    """
+    """MDS-based IGTD-inspired feature mapper."""
     def __init__(self, n_features):
         self.n_features = n_features
         self.side = int(np.ceil(np.sqrt(n_features)))
@@ -166,8 +220,73 @@ class IGTD_Mapper:
                     images[:, i, j] = X[:, feature_idx]
         return images[:, None, :, :]
 
+# -------------------------------------------------------------------
+# Real IGTD mapper (original algorithm, silent)
+# -------------------------------------------------------------------
+class RealIGTDMapper:
+    """
+    Original IGTD feature mapper that learns a 2D feature ordering using the
+    IGTD algorithm, then maps tabular data to 1‑channel images.
+    Prints are suppressed during fitting.
+    """
+    def __init__(self, n_features):
+        self.n_features = n_features
+        self.side = int(np.ceil(np.sqrt(n_features)))
+        self.index = None          # feature ordering (length n_features)
+        self.feat_min = None       # per‑feature min from training
+        self.feat_max = None       # per‑feature max from training
 
-# ---------- CNN wrapper (now uses TabNetCNN for both IGTD and naive reshape) ----------
+    def fit(self, X):
+        X = np.asarray(X, dtype=np.float32)
+
+        # store normalisation parameters
+        self.feat_min = np.min(X, axis=0)
+        self.feat_max = np.max(X, axis=0)
+        norm = (X - self.feat_min) / (self.feat_max - self.feat_min + 1e-8)
+
+        # run IGTD silently
+        tmp = tempfile.mkdtemp()
+        # Suppress all print output from IGTD
+        old_stdout = sys.stdout
+        sys.stdout = open(os.devnull, 'w')
+        try:
+            table_to_image(
+                norm_d=norm,
+                scale=[self.side, self.side],
+                fea_dist_method="Pearson",
+                image_dist_method="Euclidean",
+                save_image_size=2,
+                max_step=3000,
+                val_step=200,
+                normDir=tmp,
+                error="abs"
+            )
+        finally:
+            sys.stdout.close()
+            sys.stdout = old_stdout
+
+        self.index = np.load(tmp + "/feature_order.npy")
+        shutil.rmtree(tmp)
+        return self
+
+    def transform(self, X):
+        if self.index is None:
+            raise RuntimeError("RealIGTDMapper must be fitted before transform()")
+
+        X = np.asarray(X, dtype=np.float32)
+        X_norm = (X - self.feat_min) / (self.feat_max - self.feat_min + 1e-8)
+
+        images = np.zeros((X_norm.shape[0], self.side, self.side), dtype=np.float32)
+        for pos, feature in enumerate(self.index):
+            r = pos // self.side
+            c = pos % self.side
+            if feature < self.n_features:
+                images[:, r, c] = X_norm[:, feature]
+        return images[:, None]   # (N, 1, H, W)
+
+# -------------------------------------------------------------------
+# Generic CNN wrapper for tabular-to-image models
+# -------------------------------------------------------------------
 class T2I_CNN(BaseEstimator, ClassifierMixin):
     def __init__(self, n_features, n_classes, mode="naive", epochs=100, lr=1e-3, dropout=0.3):
         self.n_features = n_features
@@ -178,17 +297,35 @@ class T2I_CNN(BaseEstimator, ClassifierMixin):
         self.lr = lr
         self.dropout = dropout
         self.mapper = None
+        self.permutation = None
         self.model = None
         self.device = DEVICE
 
     def _to_image(self, X):
         if self.mode == "naive":
+            if self.permutation is None:
+                rng = np.random.default_rng(42)
+                self.permutation = rng.permutation(self.n_features)
+            X = X[:, self.permutation]
             X_padded = np.pad(X, ((0, 0), (0, self.side**2 - self.n_features)))
             return X_padded.reshape(-1, 1, self.side, self.side)
+
+        elif self.mode == "real_igtd":
+            if self.mapper is None:
+                self.mapper = RealIGTDMapper(self.n_features).fit(X)
+            return self.mapper.transform(X)
+
         elif self.mode == "igtd":
             if self.mapper is None:
                 self.mapper = IGTD_Mapper(self.n_features).fit(X)
             return self.mapper.transform(X)
+
+        elif self.mode == "deepinsight":
+            if self.mapper is None:
+                self.mapper = DeepInsightMapper(self.n_features)
+                self.mapper.fit(X)
+            return self.mapper.transform(X)
+
         return X.reshape(-1, 1, self.side, self.side)
 
     def fit(self, X, y):
@@ -234,13 +371,11 @@ class T2I_CNN(BaseEstimator, ClassifierMixin):
             probs = torch.softmax(logits, dim=1)
         return probs.cpu().numpy()
 
-
-# ---------- Model factory (legacy) ----------
+# -------------------------------------------------------------------
+# Model factory functions
+# -------------------------------------------------------------------
 def get_models(input_dim, n_classes):
-    """
-    Returns a dict of baseline classifiers with default hyperparameters.
-    This is kept for backward compatibility; for tuning use get_model_from_params.
-    """
+    """Return default baseline classifiers (backward compatible)."""
     return {
         "XGBoost": XGBClassifier(n_estimators=100, random_state=42, eval_metric="mlogloss"),
         "LightGBM": LGBMClassifier(n_estimators=100, random_state=42, verbose=-1),
@@ -251,16 +386,14 @@ def get_models(input_dim, n_classes):
             verbose=0
         ),
         "FT-Transformer (lite)": FTTransformerWrapper(n_features=input_dim, n_classes=n_classes),
+        "IGTD": T2I_CNN(n_features=input_dim, n_classes=n_classes, mode="real_igtd"),
         "IGTD-inspired": T2I_CNN(n_features=input_dim, n_classes=n_classes, mode="igtd"),
-        "Naive Reshape": T2I_CNN(n_features=input_dim, n_classes=n_classes, mode="naive")
+        "Naive Reshape": T2I_CNN(n_features=input_dim, n_classes=n_classes, mode="naive"),
+        "DeepInsight": T2I_CNN(n_features=input_dim, n_classes=n_classes, mode="deepinsight"),
     }
 
 def get_tuned_models(dataset_name: str, n_features: int, n_classes: int):
-    """
-    Load the best hyperparameters for `dataset_name` from
-    `best_params/<dataset_name>.json` and return a dict of model instances.
-    If the JSON file does not exist, falls back to default parameters.
-    """
+    """Load tuned hyperparameters from best_params/<dataset>.json."""
     best_params_path = Path(__file__).parent / "best_params" / f"{dataset_name}.json"
     if best_params_path.exists():
         with open(best_params_path, "r") as f:
@@ -269,22 +402,17 @@ def get_tuned_models(dataset_name: str, n_features: int, n_classes: int):
         all_params = {}
 
     models = {}
-    # Use the same model keys as in get_models()
     for model_name in [
         "XGBoost", "LightGBM", "CatBoost", "TabNet",
-        "FT-Transformer (lite)", "IGTD-inspired", "Naive Reshape"
+        "FT-Transformer (lite)", "IGTD-inspired", "IGTD",
+        "Naive Reshape", "DeepInsight"
     ]:
         params = all_params.get(model_name, {})
         models[model_name] = get_model_from_params(model_name, n_features, n_classes, params)
-
     return models
 
-# ---------- New: instantiate with hyperparameters ----------
 def get_model_from_params(model_name, n_features, n_classes, params=None):
-    """
-    Instantiate a model with given hyperparameters.
-    If params is None or empty, use defaults.
-    """
+    """Instantiate a model with given hyperparameters."""
     if params is None:
         params = {}
 
@@ -340,15 +468,23 @@ def get_model_from_params(model_name, n_features, n_classes, params=None):
             n_blocks=params.get('n_blocks', 2),
             dropout=params.get('dropout', 0.1)
         )
-    elif model_name in ["IGTD-inspired", "Naive Reshape"]:
-        mode = "igtd" if "IGTD" in model_name else "naive"
+    elif model_name in ["IGTD", "IGTD-inspired", "Naive Reshape", "DeepInsight"]:
+        if model_name == "IGTD":
+            mode = "real_igtd"
+        elif model_name == "IGTD-inspired":
+            mode = "igtd"
+        elif model_name == "DeepInsight":
+            mode = "deepinsight"
+        else:
+            mode = "naive"
+
         return T2I_CNN(
             n_features=n_features,
             n_classes=n_classes,
             mode=mode,
-            epochs=params.get('epochs', 100),
-            lr=params.get('lr', 1e-3),
-            dropout=params.get('dropout', 0.3)
+            epochs=params.get("epochs", 100),
+            lr=params.get("lr", 1e-3),
+            dropout=params.get("dropout", 0.3)
         )
     else:
         raise ValueError(f"Unknown model name: {model_name}")
