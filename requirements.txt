@@ -4,36 +4,53 @@
 #   pip install -r requirements.txt
 
 # ------------------------------
-# Core data & ML libraries
+# Core data & scientific computing
 # ------------------------------
-numpy>=1.21.0
-pandas>=1.3.0
-scikit-learn>=1.0.0
-scipy>=1.7.0              # required by scikit-learn metrics
+numpy>=1.26,<2.0
+pandas>=1.5
+scipy>=1.10
+scikit-learn>=1.3
 
 # ------------------------------
 # Deep learning
 # ------------------------------
-torch>=1.9.0              # PyTorch (no strict upper bound, works with 2.x)
-pytorch-tabnet>=4.0.0     # TabNet classifier (official PyTorch implementation)
-xgboost
-lightgbm
-catboost
+torch>=2.0
+torchvision>=0.15
+pytorch-tabnet>=4.1
 
 # ------------------------------
-# Interactive dashboard & visualization
+# Classical machine learning
 # ------------------------------
-streamlit>=1.19.0
-matplotlib>=3.5.0
-seaborn>=0.11.0
-Pillow>=9.0.0             # image handling (used internally by matplotlib/streamlit)
+xgboost>=2.0
+lightgbm>=4.0
+catboost>=1.2
 
 # ------------------------------
-# Hyperparameter search (API)
+# Tabular-to-image baselines
 # ------------------------------
-optuna>=3.0.0             # Bayesian & random search
+pyDeepInsight>=0.2.3
+astropy>=6.0
 
 # ------------------------------
-# Miscellaneous utilities
+# Hyperparameter optimisation
 # ------------------------------
-tqdm>=4.62.0              # progress bars (used by Optuna, training loops)
+optuna>=3.5
+
+# ------------------------------
+# Parallel execution & utilities
+# ------------------------------
+joblib>=1.3
+tqdm>=4.66
+
+# ------------------------------
+# Visualisation & dashboard
+# ------------------------------
+matplotlib>=3.8
+seaborn>=0.13
+Pillow>=10.0
+streamlit>=1.35
+
+# ------------------------------
+# Optional utilities
+# ------------------------------
+pyyaml>=6.0

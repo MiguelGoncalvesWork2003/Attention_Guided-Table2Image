@@ -37,15 +37,21 @@ See the accompanying paper for the complete mathematical formulation.
 
 - Deterministic image generation – the same input always produces the same image.
 - Supervised layouts directly derived from TabNet attention.
-- Five layout strategies:
+- Five AG-T2I layout strategies:
   - StepRow
   - StepSparse
   - PackedRow
   - PackedCol
   - AttentionMap
+- **Extended baseline suite** now includes:
+  - Real **IGTD** (Iterative Global Tabular Data)
+  - IGTD-inspired (MDS-based)
+  - **DeepInsight** (t-SNE-based feature embedding)
+  - Naive Reshape (random feature ordering)
+- All baselines can be tuned individually or alongside AG-T2I layouts.
 - End-to-end benchmarking pipeline with 5-fold cross-validation.
 - Automatic preprocessing (imputation, encoding, scaling).
-- Hyperparameter optimisation (Random Search + Bayesian Optimisation).
+- Hyperparameter optimisation via Random Search (baselines) and Bayesian Optimisation (Optuna) (AG-T2I).
 - Statistical significance testing (Wilcoxon, Friedman, Nemenyi).
 - Interactive Streamlit dashboard.
 
@@ -53,16 +59,14 @@ See the accompanying paper for the complete mathematical formulation.
 
 # Repository Structure
 
-The repository is organised around the four stages of the AG-T2I pipeline.
-
 ```text
 .
-├── api.py                         # Command-line API
-├── app.py                         # Streamlit dashboard
-├── preprocessing/                 # Data preprocessing
-├── tabnet_fs/                     # TabNet training & attention extraction
-├── image_builder/                 # Layouts & image construction
-├── cnn/                           # CNN architecture, training & evaluation
+├── api.py
+├── app.py
+├── preprocessing/
+├── tabnet_fs/
+├── image_builder/
+├── cnn/
 ├── running_all_models/
 │   ├── benchmark_parallel.py
 │   ├── benchmark.py
@@ -71,10 +75,10 @@ The repository is organised around the four stages of the AG-T2I pipeline.
 │   ├── metrics.py
 │   ├── utils.py
 │   └── statistical_tests.py
-├── experiments/                   # Output graphs & results
+├── external/
+│   ├── IGTD/
+├── experiments/
 ├── data/
-│   ├── raw/
-│   └── processed/
 ├── cache/
 ├── figures/
 ├── requirements.txt
@@ -95,6 +99,9 @@ The repository is organised around the four stages of the AG-T2I pipeline.
 - seaborn
 - Streamlit *(optional)*
 - Optuna *(optional)*
+- pyDeepInsight *(for the DeepInsight baseline)*
+- scipy
+- astropy
 
 Install everything with
 
@@ -114,6 +121,26 @@ cd Attention_Guided-Table2Image
 pip install -r requirements.txt
 ```
 
+## IGTD
+
+Download the original IGTD repository and place its `Scripts` folder inside
+
+```text
+external/IGTD/Scripts/
+```
+
+The benchmark automatically detects `IGTD_Functions.py`.
+
+## DeepInsight
+
+Install the official Python implementation
+
+```bash
+pip install pyDeepInsight
+```
+
+No further configuration is required.
+
 ---
 
 # Quick Start
@@ -124,9 +151,9 @@ pip install -r requirements.txt
 python api.py run Cancer --target Class --layout step_row --seed 42
 ```
 
-This executes:
+This performs:
 
-1. Preprocessing
+1. Data preprocessing
 2. TabNet training
 3. Attention extraction
 4. Layout generation
@@ -134,13 +161,13 @@ This executes:
 6. CNN training
 7. Evaluation
 
-## Launch the interactive dashboard
+## Launch the dashboard
 
 ```bash
 streamlit run app.py
 ```
 
-The dashboard allows you to inspect:
+The dashboard visualises:
 
 - attention masks
 - generated layouts
@@ -150,7 +177,7 @@ The dashboard allows you to inspect:
 
 ---
 
-# Layout Strategies
+# AG-T2I Layout Strategies
 
 | Layout | Description |
 |---------|-------------|
@@ -158,44 +185,54 @@ The dashboard allows you to inspect:
 | **StepSparse** | Fixed-width version of StepRow (10 columns per step). |
 | **PackedRow** | Packs retained features row-major according to global importance. |
 | **PackedCol** | Column-major version of PackedRow. |
-| **AttentionMap** | Complete attention matrix (steps × features); no feature removal. |
+| **AttentionMap** | Complete attention matrix (steps × features). |
 
 The first four layouts discard features whose average attention is below **θ = 0.005**.
 
-The **AttentionMap** keeps every feature.
+AttentionMap retains every feature.
 
 ---
 
-# Benchmarks & Statistical Analysis
+# Benchmarks
 
-The repository includes implementations of:
+Implemented models:
 
-- XGBoost
-- LightGBM
-- CatBoost
-- Random Forest
-- MLP
-- TabNet
-- FT-Transformer (light)
-- Naive Reshape
-- IGTD-inspired baseline
-- All five AG-T2I layouts
+| Model | Category |
+|-------|----------|
+| XGBoost | Gradient Boosting |
+| LightGBM | Gradient Boosting |
+| CatBoost | Gradient Boosting |
+| TabNet | Deep Learning |
+| FT-Transformer (Lite) | Transformer |
+| IGTD | CNN-based |
+| IGTD-inspired | CNN-based |
+| DeepInsight | CNN-based |
+| Naive Reshape | CNN-based |
+| AG-T2I StepRow | Proposed |
+| AG-T2I PackedRow | Proposed |
+| AG-T2I PackedCol | Proposed |
+| AG-T2I StepSparse | Proposed |
+| AG-T2I AttentionMap | Proposed |
 
-Run the complete benchmark:
+Run the benchmark
 
 ```bash
 python running_all_models/benchmark_parallel.py --dataset Cancer --workers 8
 ```
 
-Run statistical significance tests:
+Run specific models
 
 ```bash
-python running_all_models/statistical_tests.py
+python running_all_models/benchmark_parallel.py --dataset Iris --model DeepInsight
+
+python running_all_models/benchmark_parallel.py --dataset Iris --model DeepInsight IGTD "Naive Reshape"
+
+python running_all_models/benchmark_parallel.py --dataset Iris --model XGBoost AG-T2I-step_row
 ```
 
-Results are stored in
+Results are saved under
 
-```
+```text
 running_all_models/results/
 ```
 
@@ -203,62 +240,72 @@ running_all_models/results/
 
 # Hyperparameter Optimisation
 
-Search the best parameters using a 3-fold inner cross-validation.
+Tune one model
 
 ```bash
-python running_all_models/hyperparameter_search.py Cancer --target Class --agt2i_trials 20
+python running_all_models/hyperparameter_search.py --dataset Iris --model DeepInsight --fresh
 ```
 
-The AG-T2I variants optimise both TabNet and CNN parameters.
+Tune multiple models
 
-Results are stored in
+```bash
+python running_all_models/hyperparameter_search.py --dataset Iris --model DeepInsight IGTD "Naive Reshape" --fresh
+```
 
+Tune every model
+
+```bash
+python running_all_models/hyperparameter_search.py --dataset Iris --fresh
 ```
-running_all_models/results_hyperparameter/
+
+Best parameters are automatically stored in
+
+```text
+running_all_models/best_params/<dataset>.json
 ```
+
+and reused during benchmarking.
 
 ---
 
 # Outputs
 
-Each experiment produces:
+Each experiment generates:
 
 - Trained TabNet model
 - Frozen attention masks
 - Aggregated attention statistics
 - Layout coordinates
-- Generated image tensors
-- Trained CNN checkpoint
-- Evaluation metrics (CSV + JSON)
+- Image tensors
+- CNN checkpoint
+- Evaluation metrics (CSV and JSON)
 - Diagnostic visualisations
 
 ---
 
 # Reproducibility
 
-All experiments are fully deterministic.
+All experiments are deterministic.
 
-- Fixed global seed (42)
+- Fixed random seed (42)
 - CUDA deterministic mode
-- Frozen deterministic layouts
+- Frozen layouts
 - Fixed stratified splits
 
-Running the same experiment with the same dataset and seed always produces identical results.
+Running the same experiment with the same dataset and seed reproduces identical results.
 
 ---
 
 # Roadmap
 
-- [ ] Release pretrained TabNet and CNN models
-- [ ] Add additional benchmark datasets
+- [ ] Release pretrained models
+- [ ] Add more benchmark datasets
 - [ ] Publish accompanying paper
 - [ ] Docker support
 
 ---
 
 # Citation
-
-If you use this repository, please cite
 
 ```bibtex
 @article{bourgingoncalves2026agt2i,
