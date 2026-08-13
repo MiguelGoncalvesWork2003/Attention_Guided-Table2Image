@@ -21,6 +21,7 @@ running_all_models/results/
 running_all_models/results_hyperparameter/
 running_all_models/misclassified/
 running_all_models/roc_data/
+running_all_models/studies/
 running_all_models/best_params/
 
 # Archive

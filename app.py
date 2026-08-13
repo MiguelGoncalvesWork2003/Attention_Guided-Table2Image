@@ -182,8 +182,8 @@ def save_uploaded_file(uploaded_file, raw_dir):
 st.header("Phase 1: Dataset Selection & Loading")
 
 AVAILABLE_DATASETS = [
-    "Cancer", "Glass", "Iris", "Thyroid", "Diabetes", "Gene", "Soybean",
-    "Heart", "Horse", "Forest_Cover_Type", "Poker_Hand"
+    "Cancer", "Card", "Diabetes", "Electricity", "Forest_Cover_Type", "Gene", "Glass",
+    "Heart", "Horse", "Iris", "Magic04", "Poker_Hand", "Soybean", "Thyroid"
 ]
 
 data_source = st.radio(
@@ -711,8 +711,9 @@ if st.session_state.get('pipeline_run', False):
     TABNET_OUT = TABNET_DIR / "outputs" / f"output_{DATASET}"
     CNN_MODELS_DIR = CNN_DIR / "cnn_models"
     RESULTS_CSV = RESULTS_DIR / f"{DATASET}_results.csv"
-    MOL_VIZ_DIR = MOL_VIZ_BASE / DATASET / mol_layout
+    MOL_VIZ_DIR = MOL_VIZ_BASE / DATASET / f"{mol_layout}_seed{SEED}"
     MOL_GRIDS_DIR = MOL_VIZ_DIR / "grids"
+    os.environ["OUTPUT_DIR"] = str(PROCESSED_DIR)
     
     # Create directories
     PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
@@ -814,7 +815,7 @@ if st.session_state.get('pipeline_run', False):
 )
 
     # Check existing images for this layout
-    layout_image_exists = (PROCESSED_DIR / "X_train_img.npy").exists()
+    layout_image_exists = (PROCESSED_DIR / f"{mol_layout}_seed{SEED}" / "X_train_img.npy").exists()
     
     if reuse_prev and layout_image_exists:
         st.info("✓ Using existing CNN image tensors")
@@ -954,44 +955,53 @@ if st.session_state.get('pipeline_run', False):
     )
 
     try:
-        results_file = PROCESSED_DIR / f"cnn_evaluation_results_{mol_layout}.json"
+        task_output_dir = PROCESSED_DIR / f"{mol_layout}_seed{SEED}"
+        results_file = task_output_dir / f"cnn_evaluation_results_{mol_layout}.json"
         
         if results_file.exists():
-            # Load evaluation results (computed by evaluate_cnn.py)
             with open(results_file, 'r') as f:
                 eval_results = json.load(f)
-            
-            # Store in session state for visualization
+
+            # Build a compatible results dict for the UI
+            # (the new evaluate script does not include raw y_test/y_pred)
             st.session_state['results'] = {
+                # The raw arrays are no longer in the JSON – set empty
                 "y_test": np.array(eval_results.get("y_test", [])),
                 "y_pred": np.array(eval_results.get("y_pred", [])),
                 "y_prob": np.array(eval_results.get("y_prob", [])) if "y_prob" in eval_results else None,
+
+                # Metrics that are always present
                 "accuracy": eval_results.get("accuracy", 0),
                 "balanced_accuracy": eval_results.get("balanced_accuracy", 0),
                 "f1_score": eval_results.get("f1_macro", 0),
                 "cohen_kappa": eval_results.get("cohen_kappa", 0),
+
+                # Confusion matrix & report – already stored as list/dict
                 "confusion_matrix": np.array(eval_results.get("confusion_matrix", [])),
                 "classification_report": eval_results.get("classification_report", {}),
-                "n_classes": eval_results.get("n_classes", 0),
+
+                # Supplementary fields (safe defaults)
+                "n_classes": eval_results.get("n_classes", len(np.unique(
+                    np.array(eval_results.get("y_test", []))
+                )) if "y_test" in eval_results else 0),
                 "correct_predictions": eval_results.get("correct_predictions", 0),
                 "total_samples": eval_results.get("total_samples", 0)
             }
-            
+
             st.success(
                 f"✓ Evaluation Results Loaded: "
                 f"Accuracy = {eval_results.get('accuracy', 0):.2%}"
             )
         else:
             st.error(
-                "CNN evaluation results were not found. "
-                "Please verify that evaluate_cnn.py completed successfully. "
-                f"Expected results at: {results_file}"
+                "CNN evaluation results were not found.\n"
+                f"Expected file: {results_file}\n"
+                "Please verify that evaluate_cnn.py completed successfully."
             )
             st.info(
-                "The evaluation should be run as part of the pipeline. "
-                "If it failed, try running the pipeline again."
+                "Make sure the pipeline ran with the same layout and seed. "
+                "If the file is missing, try re-running the pipeline."
             )
-            
     except Exception as e:
         st.error(f"Error loading evaluation results: {e}")
         import traceback

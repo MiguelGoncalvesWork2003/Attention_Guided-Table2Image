@@ -274,14 +274,15 @@ class RealIGTDMapper:
             raise RuntimeError("RealIGTDMapper must be fitted before transform()")
 
         X = np.asarray(X, dtype=np.float32)
-        X_norm = (X - self.feat_min) / (self.feat_max - self.feat_min + 1e-8)
 
-        images = np.zeros((X_norm.shape[0], self.side, self.side), dtype=np.float32)
+        images = np.zeros((X.shape[0], self.side, self.side), dtype=np.float32)
+
         for pos, feature in enumerate(self.index):
             r = pos // self.side
             c = pos % self.side
             if feature < self.n_features:
-                images[:, r, c] = X_norm[:, feature]
+                images[:, r, c] = X[:, feature]
+
         return images[:, None]   # (N, 1, H, W)
 
 # -------------------------------------------------------------------

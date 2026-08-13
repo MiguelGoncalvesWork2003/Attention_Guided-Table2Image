@@ -6,6 +6,7 @@ Now uses 3‑fold CV for AG‑T2I as well.
 """
 
 import os
+os.environ["MPLBACKEND"] = "Agg"          # <-- set BEFORE any matplotlib import
 os.environ["PYTHONWARNINGS"] = "ignore"
 import sys
 import json
@@ -38,16 +39,16 @@ from running_all_models.models_factory import get_models
 
 # ---------- CONFIGURATION ----------
 DATASETS = [
-    ("Iris", "Class"),
-    ("Diabetes", "Class"),
+    #("Iris", "Class"),
+    #("Diabetes", "Class"),
     ("Cancer", "Class"),
-    ("Glass", "Class"),
-    ("Card", "Class"),
-    ("Thyroid", "Class"),
-    ("Heart", "Class"),
-    ("Horse", "Class"),
-    ("Gene", "Class"),
-    ("Soybean", "Class"),
+    #("Glass", "Class"),
+    #("Card", "Class"),
+    #("Thyroid", "Class"),
+    #("Heart", "Class"),
+    #("Horse", "Class"),
+    #("Gene", "Class"),
+    #("Soybean", "Class"),
     #("Adult", "Class"),
     #("Bank", "Class"),
     #("Electricity", "Class"),
@@ -72,12 +73,12 @@ TRIALS = {
     "XGBoost": 25,
     "LightGBM": 25,
     "CatBoost": 25,
-    "TabNet": 10,
-    "FT-Transformer (lite)": 15,
+    "TabNet": 25,
+    "FT-Transformer (lite)": 25,
     "IGTD-inspired": 25,
-    "IGTD": 25,
-    "Naive Reshape": 25,
-    "DeepInsight": 25,        # ← added
+    "IGTD": 10,
+    "Naive Reshape": 15,
+    "DeepInsight": 15,     
 }
 
 AGT2I_TRIALS = 25
@@ -265,7 +266,7 @@ def tune_agt2i_layout(dataset_name: str, target_col: str, layout: str, n_trials:
                     train_idx, test_idx,
                     tabnet_params, cnn_params
                 )
-                scores.append(result["test"].get("auroc", 0.0))
+                scores.append(result["test"].get("f1_macro", 0.0))
             except Exception:
                 # If the fold fails (e.g. too few samples), return a low score
                 scores.append(0.0)
