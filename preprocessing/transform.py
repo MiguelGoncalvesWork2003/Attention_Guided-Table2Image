@@ -158,6 +158,10 @@ class CategoricalEncoder(BaseEstimator, TransformerMixin):
         self.label_encoders_ = {}
         self.ordinal_encoder_ = None
         self.categorical_columns_ = []
+        # AUDIT FIX: per-column most-frequent training category, used to
+        # replace unseen test categories (Section 5.2: "unseen test
+        # categories are replaced by the most frequent training category").
+        self.most_frequent_encoded_ = {}
     
     def fit(self, X: pd.DataFrame, y=None):
         self.categorical_columns_ = X.select_dtypes(
@@ -168,8 +172,18 @@ class CategoricalEncoder(BaseEstimator, TransformerMixin):
             for col in self.categorical_columns_:
                 le = LabelEncoder()
                 # Handle missing values by converting to string
-                le.fit(X[col].astype(str))
+                col_str = X[col].astype(str)
+                le.fit(col_str)
                 self.label_encoders_[col] = le
+                # Record the most frequent training category's encoded value,
+                # for unseen categories at transform time.
+                most_frequent_value = col_str.mode(dropna=True)
+                if len(most_frequent_value) > 0:
+                    self.most_frequent_encoded_[col] = int(
+                        le.transform([most_frequent_value.iloc[0]])[0]
+                    )
+                else:
+                    self.most_frequent_encoded_[col] = 0
         elif self.encoding_strategy == "ordinal":
             self.ordinal_encoder_ = OrdinalEncoder(
                 handle_unknown='use_encoded_value',
@@ -192,9 +206,14 @@ class CategoricalEncoder(BaseEstimator, TransformerMixin):
 
                     unseen_mask = ~X_col.isin(encoder.classes_)
                     if unseen_mask.any():
-                        warnings.warn(f"Unseen categories in {col}, encoding as -1")
+                        warnings.warn(
+                            f"Unseen categories in {col}, encoding as the "
+                            f"most frequent training category "
+                            f"(Section 5.2)."
+                        )
 
-                    X[col] = X_col.map(mapping).fillna(-1).astype(int)
+                    fallback = self.most_frequent_encoded_.get(col, 0)
+                    X[col] = X_col.map(mapping).fillna(fallback).astype(int)
         
         elif self.encoding_strategy == "ordinal" and self.ordinal_encoder_ is not None:
             X[self.categorical_columns_] = self.ordinal_encoder_.transform(

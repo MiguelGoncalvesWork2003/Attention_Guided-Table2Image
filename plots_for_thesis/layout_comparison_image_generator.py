@@ -262,7 +262,7 @@ def main():
 
     methods = {
         "IGTD (real)":       "real_igtd",
-        "IGTD-inspired":     "igtd",
+        "MDS-Layout":     "igtd",
         "DeepInsight":       "deepinsight",
         "Naive Reshape":     "naive",
     }

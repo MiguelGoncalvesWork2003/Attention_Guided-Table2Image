@@ -15,7 +15,7 @@ parser.add_argument("--layout", required=True,
                     choices=["step_row", "packed", "packed_T", "step_sparse", "attention_map"])
 args = parser.parse_args()
 
-# Updated database and study name for F1 optimisation
+# Updated database and study name for ROC-AUC optimisation
 db_path = OPTUNA_DB_DIR / f"optuna_study_{args.layout}.db"
 storage = f"sqlite:///{db_path}"
 study_name = f"{args.dataset}_{args.layout}_bayesian_v2"
@@ -42,7 +42,7 @@ print(f"Best value: {study.best_value:.4f}")
 
 fig = plot_optimization_history(study)
 plt.xlabel("Trial")
-plt.ylabel("Validation Macro F1")
+plt.ylabel("Validation Macro ROC-AUC")
 plt.tight_layout()
 
 out_pdf = OUTPUT_DIR / f"hpo_history_{args.dataset}_{args.layout}.pdf"

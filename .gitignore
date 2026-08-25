@@ -24,6 +24,10 @@ running_all_models/roc_data/
 running_all_models/studies/
 running_all_models/best_params/
 
+figures
+verify_bugs.py
+bug_verification_report.json
+
 # Archive
 archive/
 

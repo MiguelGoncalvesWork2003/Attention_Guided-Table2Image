@@ -70,9 +70,15 @@ X_test_img  = np.load(required["X_test_img.npy"])
 y_train     = np.load(required["y_train.npy"])
 y_test      = np.load(required["y_test.npy"])
 
-# Normalize labels to 0‑based
-y_train = y_train - y_train.min()
-y_test  = y_test  - y_test.min()
+# Labels are already 0-based from the preprocessing LabelEncoder. Do NOT
+# shift by the local minimum: if a class is absent from this split, the
+# shift silently relabels every other class, mislabelling the per-class
+# grids and average-image figures below.
+if y_train.min() < 0 or y_test.min() < 0:
+    raise ValueError(
+        f"Negative labels found (train min={y_train.min()}, "
+        f"test min={y_test.min()}); labels should already be 0-based."
+    )
 
 # Layout metadata now also lives in the isolated input directory
 layout_path = INPUT_DIR / f"tabnet_layout_{MOL_LAYOUT}.json"

@@ -121,7 +121,7 @@ def check_tabnet_outputs(tabnet_output_dir: Path) -> Tuple[bool, List[str], List
     if assignment_path.exists():
         try:
             df = pd.read_csv(assignment_path)
-            required_columns = ['feature', 'dominant_step', 'importance_score']
+            required_columns = ['feature', 'dominant_step', 'global_importance']
             missing_columns = [col for col in required_columns if col not in df.columns]
             if missing_columns:
                 warnings.append(f"Step assignment missing columns: {missing_columns}")

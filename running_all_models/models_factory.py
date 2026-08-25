@@ -13,10 +13,26 @@ from sklearn.base import BaseEstimator, ClassifierMixin
 from sklearn.manifold import MDS
 from sklearn.metrics import pairwise_distances
 
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.neural_network import MLPClassifier
 from xgboost import XGBClassifier
 from lightgbm import LGBMClassifier
 from catboost import CatBoostClassifier
-from pytorch_tabnet.tab_model import TabNetClassifier
+from pytorch_tabnet.tab_model import TabNetClassifier as _TabNetClassifierBase
+
+
+class TabNetClassifier(ClassifierMixin, _TabNetClassifierBase):
+    """
+    pytorch-tabnet's TabNetClassifier does not inherit ClassifierMixin at all
+    (its real MRO is [TabNetClassifier, TabModel, BaseEstimator, ...]),
+    despite being functionally a classifier. Recent sklearn's is_classifier()
+    returns False for it as a result, and response_method="predict_proba"
+    scoring (used by hyperparameter_search.py's RandomizedSearchCV) rejects
+    it with "Got a regressor". This subclass adds only the missing mixin;
+    no other behaviour changes -- predict_proba, classes_, and every
+    constructor argument are exactly as pytorch-tabnet defines them.
+    """
+    pass
 from sklearn.manifold import TSNE
 import sys
 import os
@@ -81,7 +97,7 @@ class FTTransformerNative(nn.Module):
         return self.head(cls_repr)
 
 
-class FTTransformerWrapper(BaseEstimator, ClassifierMixin):
+class FTTransformerWrapper(ClassifierMixin, BaseEstimator):
     def __init__(self, n_features, n_classes, epochs=50, batch_size=32, lr=1e-3,
                  d_token=32, n_heads=4, n_blocks=2, dropout=0.1):
         self.n_features = n_features
@@ -96,19 +112,44 @@ class FTTransformerWrapper(BaseEstimator, ClassifierMixin):
         self.model = None
 
     def fit(self, X, y):
+        from sklearn.model_selection import train_test_split
+        from sklearn.metrics import roc_auc_score
+        import copy
+
+        # See the identical comment in T2I_CNN.fit() -- required for
+        # sklearn's classifier response-value validation, fixed width by
+        # construction rather than derived from np.unique(y).
+        self.classes_ = np.arange(self.n_classes)
+
         self.model = FTTransformerNative(
             self.n_features, self.n_classes,
             d_token=self.d_token, n_heads=self.n_heads,
             n_blocks=self.n_blocks, dropout=self.dropout
         ).to(DEVICE)
-        X_t = torch.tensor(X, dtype=torch.float32)
-        y_t = torch.tensor(y, dtype=torch.long)
-        dataset = torch.utils.data.TensorDataset(X_t, y_t)
+
+        # Internal 80/20 split for early stopping (Section 5.5, item 4).
+        # random_state fixed at 42 to match the convention already used by
+        # T2I_CNN.fit() elsewhere in this module.
+        idx = np.arange(len(X))
+        y_arr = np.asarray(y)
+        try:
+            tr, va = train_test_split(idx, test_size=0.2, stratify=y_arr, random_state=42)
+        except ValueError:
+            tr, va = train_test_split(idx, test_size=0.2, random_state=42)
+
+        X_tr = torch.tensor(np.asarray(X)[tr], dtype=torch.float32)
+        y_tr = torch.tensor(y_arr[tr], dtype=torch.long)
+        X_va = torch.tensor(np.asarray(X)[va], dtype=torch.float32).to(DEVICE)
+        y_va = y_arr[va]
+
+        dataset = torch.utils.data.TensorDataset(X_tr, y_tr)
         loader = torch.utils.data.DataLoader(dataset, batch_size=self.batch_size, shuffle=True)
         optimizer = torch.optim.AdamW(self.model.parameters(), lr=self.lr, weight_decay=1e-5)
         criterion = nn.CrossEntropyLoss()
-        self.model.train()
+
+        best, best_state, stale, PATIENCE = -np.inf, None, 0, 20
         for _ in range(self.epochs):
+            self.model.train()
             for xb, yb in loader:
                 xb, yb = xb.to(DEVICE), yb.to(DEVICE)
                 optimizer.zero_grad()
@@ -117,6 +158,29 @@ class FTTransformerWrapper(BaseEstimator, ClassifierMixin):
                 loss.backward()
                 torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
                 optimizer.step()
+
+            self.model.eval()
+            with torch.no_grad():
+                probs = torch.softmax(self.model(X_va), dim=1).cpu().numpy()
+            try:
+                score = (roc_auc_score(y_va, probs[:, 1]) if probs.shape[1] == 2
+                         else roc_auc_score(y_va, probs, multi_class="ovr",
+                                            average="macro",
+                                            labels=list(range(self.n_classes))))
+            except ValueError:
+                score = float((probs.argmax(1) == y_va).mean())
+
+            if score > best:
+                best, stale = score, 0
+                best_state = copy.deepcopy(self.model.state_dict())
+            else:
+                stale += 1
+                if stale >= PATIENCE:
+                    break
+
+        if best_state is not None:
+            self.model.load_state_dict(best_state)
+        self.best_val_score_ = best
         return self
 
     def predict(self, X):
@@ -178,10 +242,10 @@ class DeepInsightMapper:
         return images[:, None, :, :]
 
 # -------------------------------------------------------------------
-# IGTD-inspired mapper (MDS)
+# MDS-layout mapper 
 # -------------------------------------------------------------------
 class IGTD_Mapper:
-    """MDS-based IGTD-inspired feature mapper."""
+    """MDS-layout feature mapper."""
     def __init__(self, n_features):
         self.n_features = n_features
         self.side = int(np.ceil(np.sqrt(n_features)))
@@ -288,8 +352,9 @@ class RealIGTDMapper:
 # -------------------------------------------------------------------
 # Generic CNN wrapper for tabular-to-image models
 # -------------------------------------------------------------------
-class T2I_CNN(BaseEstimator, ClassifierMixin):
-    def __init__(self, n_features, n_classes, mode="naive", epochs=100, lr=1e-3, dropout=0.3):
+class T2I_CNN(ClassifierMixin, BaseEstimator):
+    def __init__(self, n_features, n_classes, mode="naive", epochs=100, lr=1e-3,
+                 dropout=0.3, arch="tabnetcnn"):
         self.n_features = n_features
         self.n_classes = n_classes
         self.side = int(np.ceil(np.sqrt(n_features)))
@@ -297,6 +362,7 @@ class T2I_CNN(BaseEstimator, ClassifierMixin):
         self.epochs = epochs
         self.lr = lr
         self.dropout = dropout
+        self.arch = arch
         self.mapper = None
         self.permutation = None
         self.model = None
@@ -330,30 +396,74 @@ class T2I_CNN(BaseEstimator, ClassifierMixin):
         return X.reshape(-1, 1, self.side, self.side)
 
     def fit(self, X, y):
+        from sklearn.model_selection import train_test_split
+        from sklearn.metrics import roc_auc_score
+        import copy
+
+        # Required for sklearn's classifier response-value validation
+        # (response_method="predict_proba") to recognise this estimator and
+        # correctly align predict_proba's columns. The output layer has a
+        # fixed width of self.n_classes regardless of which classes this
+        # particular fold's y contains, so this is np.arange(self.n_classes),
+        # not np.unique(y).
+        self.classes_ = np.arange(self.n_classes)
+
         X_img = self._to_image(X)
-        self.model = TabNetCNN(
-            n_classes=self.n_classes,
-            input_channels=1,
-            image_height=self.side,
-            image_width=self.side,
-            dropout=self.dropout
+        h, w = X_img.shape[2], X_img.shape[3]
+
+        from cnn.cnn_architectures import build_model
+        self.model = build_model(
+            self.arch,
+            n_classes=self.n_classes, input_channels=1,
+            image_height=h, image_width=w,      # actual shape, not assumed square
+            dropout=self.dropout,
         ).to(self.device)
 
-        X_t = torch.tensor(X_img, dtype=torch.float32)
-        y_t = torch.tensor(y, dtype=torch.long)
-        dataset = torch.utils.data.TensorDataset(X_t, y_t)
-        loader = torch.utils.data.DataLoader(dataset, batch_size=32, shuffle=True)
+        idx = np.arange(len(X_img))
+        try:
+            tr, va = train_test_split(idx, test_size=0.2, stratify=y, random_state=42)
+        except ValueError:
+            tr, va = train_test_split(idx, test_size=0.2, random_state=42)
 
-        optimizer = torch.optim.Adam(self.model.parameters(), lr=self.lr)
-        criterion = nn.CrossEntropyLoss()
-        self.model.train()
-        for _ in range(self.epochs):
+        X_tr = torch.tensor(X_img[tr], dtype=torch.float32)
+        y_tr = torch.tensor(np.asarray(y)[tr], dtype=torch.long)
+        X_va = torch.tensor(X_img[va], dtype=torch.float32).to(self.device)
+        y_va = np.asarray(y)[va]
+
+        loader = torch.utils.data.DataLoader(
+            torch.utils.data.TensorDataset(X_tr, y_tr), batch_size=32, shuffle=True)
+        opt = torch.optim.Adam(self.model.parameters(), lr=self.lr)
+        crit = nn.CrossEntropyLoss()
+
+        best, best_state, best_ep, stale, PATIENCE = -np.inf, None, 0, 0, 20
+        for epoch in range(self.epochs):
+            self.model.train()
             for xb, yb in loader:
                 xb, yb = xb.to(self.device), yb.to(self.device)
-                optimizer.zero_grad()
-                loss = criterion(self.model(xb), yb)
-                loss.backward()
-                optimizer.step()
+                opt.zero_grad(); crit(self.model(xb), yb).backward(); opt.step()
+
+            self.model.eval()
+            with torch.no_grad():
+                probs = torch.softmax(self.model(X_va), dim=1).cpu().numpy()
+            try:
+                score = (roc_auc_score(y_va, probs[:, 1]) if probs.shape[1] == 2
+                         else roc_auc_score(y_va, probs, multi_class="ovr",
+                                            average="macro",
+                                            labels=list(range(self.n_classes))))
+            except ValueError:
+                score = float((probs.argmax(1) == y_va).mean())
+
+            if score > best:
+                best, best_ep, stale = score, epoch + 1, 0
+                best_state = copy.deepcopy(self.model.state_dict())
+            else:
+                stale += 1
+                if stale >= PATIENCE:
+                    break
+
+        if best_state is not None:
+            self.model.load_state_dict(best_state)
+        self.best_val_score_, self.best_epoch_ = best, best_ep
         return self
 
     def predict(self, X):
@@ -380,7 +490,15 @@ def get_models(input_dim, n_classes):
     return {
         "XGBoost": XGBClassifier(n_estimators=100, random_state=42, eval_metric="mlogloss"),
         "LightGBM": LGBMClassifier(n_estimators=100, random_state=42, verbose=-1),
-        "CatBoost": CatBoostClassifier(n_estimators=100, random_state=42, verbose=0),
+                "CatBoost": CatBoostClassifier(iterations=100, random_state=42, verbose=0),
+        "Random Forest": RandomForestClassifier(
+            n_estimators=300, random_state=42, n_jobs=1
+        ),
+        "MLP": MLPClassifier(
+            hidden_layer_sizes=(128, 64), max_iter=500,
+            early_stopping=True, validation_fraction=0.2, n_iter_no_change=20,
+            random_state=42
+        ),
         "TabNet": TabNetClassifier(
             optimizer_fn=torch.optim.Adam,
             optimizer_params=dict(lr=2e-2),
@@ -388,7 +506,7 @@ def get_models(input_dim, n_classes):
         ),
         "FT-Transformer (lite)": FTTransformerWrapper(n_features=input_dim, n_classes=n_classes),
         "IGTD": T2I_CNN(n_features=input_dim, n_classes=n_classes, mode="real_igtd"),
-        "IGTD-inspired": T2I_CNN(n_features=input_dim, n_classes=n_classes, mode="igtd"),
+        "MDS-layout": T2I_CNN(n_features=input_dim, n_classes=n_classes, mode="igtd"),
         "Naive Reshape": T2I_CNN(n_features=input_dim, n_classes=n_classes, mode="naive"),
         "DeepInsight": T2I_CNN(n_features=input_dim, n_classes=n_classes, mode="deepinsight"),
     }
@@ -404,9 +522,9 @@ def get_tuned_models(dataset_name: str, n_features: int, n_classes: int):
 
     models = {}
     for model_name in [
-        "XGBoost", "LightGBM", "CatBoost", "TabNet",
-        "FT-Transformer (lite)", "IGTD-inspired", "IGTD",
-        "Naive Reshape", "DeepInsight"
+        "XGBoost", "LightGBM", "CatBoost", "Random Forest",
+        "MLP", "TabNet", "FT-Transformer (lite)",
+        "MDS-layout", "IGTD", "Naive Reshape", "DeepInsight"
     ]:
         params = all_params.get(model_name, {})
         models[model_name] = get_model_from_params(model_name, n_features, n_classes, params)
@@ -446,7 +564,33 @@ def get_model_from_params(model_name, n_features, n_classes, params=None):
             random_state=42,
             verbose=0
         )
+    elif model_name == "Random Forest":
+        return RandomForestClassifier(
+            n_estimators=params.get('n_estimators', 300),
+            max_depth=params.get('max_depth', None),
+            min_samples_leaf=params.get('min_samples_leaf', 1),
+            max_features=params.get('max_features', 'sqrt'),
+            random_state=42,
+            n_jobs=1
+        )
+    elif model_name == "MLP":
+        return MLPClassifier(
+            hidden_layer_sizes=params.get('hidden_layer_sizes', (128, 64)),
+            alpha=params.get('alpha', 1e-4),
+            learning_rate_init=params.get('learning_rate_init', 1e-3),
+            max_iter=500,
+            early_stopping=True,
+            validation_fraction=0.2,
+            n_iter_no_change=20,
+            random_state=42
+        )
     elif model_name == "TabNet":
+        # hyperparameter_search.py's search space for TabNet samples a
+        # nested "optimizer_params": {"lr": ...} dict (matching
+        # TabNetClassifier's real constructor), not a flat "lr" key.
+        # params.get('lr', ...) below would therefore never find the tuned
+        # value; read it from the nested dict, with the same fallback.
+        tuned_lr = params.get('optimizer_params', {}).get('lr', params.get('lr', 2e-2))
         return TabNetClassifier(
             n_d=params.get('n_d', 8),
             n_a=params.get('n_a', 8),
@@ -454,7 +598,7 @@ def get_model_from_params(model_name, n_features, n_classes, params=None):
             gamma=params.get('gamma', 1.5),
             lambda_sparse=params.get('lambda_sparse', 1e-4),
             optimizer_fn=torch.optim.Adam,
-            optimizer_params=dict(lr=params.get('lr', 2e-2)),
+            optimizer_params=dict(lr=tuned_lr),
             verbose=0
         )
     elif model_name == "FT-Transformer (lite)":
@@ -469,10 +613,10 @@ def get_model_from_params(model_name, n_features, n_classes, params=None):
             n_blocks=params.get('n_blocks', 2),
             dropout=params.get('dropout', 0.1)
         )
-    elif model_name in ["IGTD", "IGTD-inspired", "Naive Reshape", "DeepInsight"]:
+    elif model_name in ["IGTD", "MDS-layout", "Naive Reshape", "DeepInsight"]:
         if model_name == "IGTD":
             mode = "real_igtd"
-        elif model_name == "IGTD-inspired":
+        elif model_name == "MDS-layout":
             mode = "igtd"
         elif model_name == "DeepInsight":
             mode = "deepinsight"

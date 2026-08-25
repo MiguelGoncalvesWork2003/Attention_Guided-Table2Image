@@ -38,32 +38,51 @@ from running_all_models.benchmark_parallel import run_agt2i_fold
 from running_all_models.models_factory import get_models
 
 # ---------- CONFIGURATION ----------
+# The 13 benchmarks of Table 5.1. Do not comment any of these out for a
+# --fresh or filter-less run: Electricity, Gene, Soybean and Magic04 are
+# reported as "completed" in Chapter 6 (Section 6.1) and any re-run (e.g.
+# after a code fix) must still cover them or the thesis numbers silently
+# stop being reproducible from this script.
+# Poker_Hand and Forest_Cover_Type are the two datasets Section 6.1 lists as
+# "still running" — see HPO_SUBSAMPLE_SIZE below before attempting these two.
+# Iris is not part of the 13-dataset suite (Table 5.1) and must stay out.
 DATASETS = [
-    #("Iris", "Class"),
-    #("Diabetes", "Class"),
-    ("Cancer", "Class"),
-    #("Glass", "Class"),
+    #("Cancer", "Class"),
     #("Card", "Class"),
-    #("Thyroid", "Class"),
+    #("Diabetes", "Class"),
+    ("Electricity", "Class"),
+    ("Gene", "Class"),
+    #("Glass", "Class"),
     #("Heart", "Class"),
     #("Horse", "Class"),
-    #("Gene", "Class"),
+    ("Magic04", "Class"),
     #("Soybean", "Class"),
-    #("Adult", "Class"),
-    #("Bank", "Class"),
-    #("Electricity", "Class"),
-    #("Magic04", "Class"),
+    #("Thyroid", "Class"),
     #("Poker_Hand", "Class"),
     #("Forest_Cover_Type", "Class"),
 ]
+
+# Datasets large enough that the 3-fold inner HPO loop (baselines:
+# RandomizedSearchCV; AGT2I: Optuna) needs a stratified subsample rather than
+# the full table, per Section 5.5: "the hyper-parameter search is performed
+# on a stratified subsample of [SUBSAMPLE SIZE] instances". That bracket is
+# still an unfilled placeholder in the thesis text — the number below is a
+# functional default only. Decide the final figure, set it here (or via the
+# HPO_SUBSAMPLE_SIZE env var), then replace [SUBSAMPLE SIZE] in Section 5.5
+# with the same number. The final benchmark (run_dataset_benchmark) always
+# trains on the complete outer training fold regardless of this setting.
+HPO_SUBSAMPLE_DATASETS = {"Poker_Hand", "Forest_Cover_Type"}
+HPO_SUBSAMPLE_SIZE = int(os.environ.get("HPO_SUBSAMPLE_SIZE", "20000"))
 
 MODELS = [
     "XGBoost",
     "LightGBM",
     "CatBoost",
+    "Random Forest",
+    "MLP",
     "TabNet",
     "FT-Transformer (lite)",
-    "IGTD-inspired",
+    "MDS-layout",
     "IGTD",
     "Naive Reshape",
     "DeepInsight",       
@@ -71,14 +90,16 @@ MODELS = [
 
 TRIALS = {
     "XGBoost": 25,
-    "LightGBM": 25,
+    "LightGBM": 25,    
     "CatBoost": 25,
-    "TabNet": 25,
-    "FT-Transformer (lite)": 25,
-    "IGTD-inspired": 25,
-    "IGTD": 10,
-    "Naive Reshape": 15,
-    "DeepInsight": 15,     
+    "Random Forest": 25,
+    "MLP": 25,
+    "TabNet": 15,
+    "FT-Transformer (lite)": 20,
+    "MDS-layout": 25,
+    "IGTD": 15,
+    "Naive Reshape": 25,
+    "DeepInsight": 25,     
 }
 
 AGT2I_TRIALS = 25
@@ -129,6 +150,20 @@ def load_and_prepare_dataset(dataset_name: str, target_col: str):
     if not raw_path.exists():
         raise FileNotFoundError(f"Dataset not found: {raw_path}")
     df = pd.read_csv(raw_path)
+
+    # Section 5.5: HPO for the two largest benchmarks runs on a stratified
+    # subsample; the final model (benchmark_parallel.py) is unaffected, since
+    # it reads the raw CSV independently and never calls this function.
+    if dataset_name in HPO_SUBSAMPLE_DATASETS and len(df) > HPO_SUBSAMPLE_SIZE:
+        from sklearn.model_selection import train_test_split as _tts
+        df, _ = _tts(
+            df, train_size=HPO_SUBSAMPLE_SIZE, stratify=df[target_col],
+            random_state=42
+        )
+        print(f"  [HPO subsample] {dataset_name}: using {len(df)}/"
+              f"{len(pd.read_csv(raw_path))} stratified rows for tuning "
+              f"(HPO_SUBSAMPLE_SIZE={HPO_SUBSAMPLE_SIZE})")
+
     X_df = df.drop(columns=[target_col])
     y = df[target_col]
     imputer = SimpleImputer(strategy="median")
@@ -142,10 +177,12 @@ def tune_single_model(dataset_name: str, target_col: str, model_name: str, n_tri
     X_full, y_full, n_features, n_classes = load_and_prepare_dataset(dataset_name, target_col)
 
     # Exclude models that handle normalization internally (IGTD, DeepInsight)
-    if model_name in ["TabNet", "FT-Transformer (lite)", "IGTD-inspired", "Naive Reshape"] \
-            and model_name not in ("IGTD", "DeepInsight"):
-        scaler = StandardScaler()
-        X_full = scaler.fit_transform(X_full)
+    NEURAL_MODELS = {
+        "TabNet", "FT-Transformer (lite)", "MLP",
+        "MDS-layout", "Naive Reshape", "IGTD", "DeepInsight",
+    }
+    if model_name in NEURAL_MODELS:
+        X_full = StandardScaler().fit_transform(X_full)
 
     model_dict = get_models(n_features, n_classes)
     if model_name not in model_dict:
@@ -171,13 +208,32 @@ def tune_single_model(dataset_name: str, target_col: str, model_name: str, n_tri
         }
         base_model.set_params(n_jobs=1)
     elif model_name == "CatBoost":
+        # NOTE: key must be "iterations", not "n_estimators" — that is the
+        # key get_model_from_params() reads back from the saved JSON
+        # (models_factory.py). CatBoost's sklearn wrapper accepts
+        # "n_estimators" too, as an alias, so RandomizedSearchCV would run
+        # without error either way; only the *read-back* key must match, or
+        # the tuned value is silently replaced by the untuned default.
         param_dist = {
-            "n_estimators": randint(100, 300),
+            "iterations": randint(100, 300),
             "depth": randint(4, 8),
             "learning_rate": loguniform(0.01, 0.2),
             "l2_leaf_reg": uniform(1, 9),
         }
         base_model.set_params(thread_count=1)
+    elif model_name == "Random Forest":
+        param_dist = {
+            "n_estimators": randint(100, 500),
+            "max_depth": [None, 5, 10, 20],
+            "min_samples_leaf": randint(1, 10),
+            "max_features": ["sqrt", "log2", None],
+        }
+    elif model_name == "MLP":
+        param_dist = {
+            "hidden_layer_sizes": [(64,), (128,), (128, 64), (256, 128)],
+            "alpha": loguniform(1e-5, 1e-2),
+            "learning_rate_init": loguniform(1e-4, 1e-2),
+        }
     elif model_name == "TabNet":
         param_dist = {
             "n_d": [8, 16],
@@ -189,7 +245,17 @@ def tune_single_model(dataset_name: str, target_col: str, model_name: str, n_tri
         }
         fit_params = {
             "eval_metric": ["accuracy"],
-            "max_epochs": 200, "patience": 20,
+            # TEMPORARY: reduced from 200. fit_params has no eval_set (it is
+            # static across every fold, and RandomizedSearchCV's per-fold
+            # validation split isn't available here to inject one), so
+            # patience below likely has nothing to monitor and every fit
+            # probably runs the full max_epochs regardless -- this measured
+            # ~0.72s/epoch on Cancer (699 rows), i.e. ~108 minutes for 15
+            # trials x 3 folds at max_epochs=200. Bounding this to 50 caps
+            # the worst case at roughly a quarter of that while the
+            # underlying missing-eval_set gap gets a proper fix (an internal
+            # 80/20 split wrapper, matching T2I_CNN/FTTransformerWrapper).
+            "max_epochs": 50, "patience": 10,
             "batch_size": 16, "virtual_batch_size": 8,
             "drop_last": False,
         }
@@ -199,7 +265,7 @@ def tune_single_model(dataset_name: str, target_col: str, model_name: str, n_tri
             "batch_size": [16, 32],
             "epochs": [50, 80],
         }
-    elif model_name in ["IGTD-inspired", "Naive Reshape", "IGTD", "DeepInsight"]:
+    elif model_name in ["MDS-layout", "Naive Reshape", "IGTD", "DeepInsight"]:
             param_dist = {
                 "epochs": [50, 80, 100, 120],  
                 "lr": loguniform(1e-4, 2e-3),          
@@ -209,23 +275,67 @@ def tune_single_model(dataset_name: str, target_col: str, model_name: str, n_tri
         return dataset_name, model_name, {}
 
     cv = StratifiedKFold(n_splits=3, shuffle=True, random_state=42)
+
+    from sklearn.metrics import make_scorer, roc_auc_score as _roc
+    def _safe_auc(y_true, y_proba, **kw):
+        try:
+            y_proba = np.asarray(y_proba)
+            y_true = np.asarray(y_true)
+            if y_proba.ndim == 1:
+                # sklearn's own scorer machinery collapses predict_proba to a
+                # 1-D "probability of positive class" array whenever the
+                # FITTED classifier only saw 2 classes. If the labels being
+                # scored here still have more than 2 unique values (a small
+                # or high-cardinality dataset's inner-CV fold losing a class
+                # is the usual cause), a binary AUC genuinely cannot be
+                # computed -- this is a degenerate, unscoreable fold, not an
+                # error, so it returns 0.0 directly rather than letting
+                # roc_auc_score raise "multi_class must be in ('ovo','ovr')".
+                if len(np.unique(y_true)) > 2:
+                    return 0.0
+                return float(_roc(y_true, y_proba))
+            nc = y_proba.shape[1]
+            # nc is how many classes the FITTED model saw this fold, which
+            # can be fewer than the dataset's true class count on small,
+            # imbalanced datasets (e.g. Glass, rarest class ~9/214 rows) if
+            # this particular inner-CV training split missed a class
+            # entirely. If the validation labels contain a class the model
+            # never saw, labels=list(range(nc)) below would silently exclude
+            # it and roc_auc_score would raise -- this is a degenerate,
+            # unscoreable fold (not a bug), named explicitly rather than
+            # falling through to the generic except.
+            if y_true.min() < 0 or y_true.max() >= nc:
+                return 0.0
+            if nc == 2:
+                return _roc(y_true, y_proba[:, 1])
+            return _roc(y_true, y_proba, multi_class="ovr", average="macro",
+                        labels=list(range(nc)))
+        except Exception:
+            # Genuinely unexpected failure (not the degenerate-fold case
+            # above, which is handled explicitly) -- worth seeing once,
+            # without flooding the console on every occurrence.
+            print(f"[_safe_auc] unexpected scoring failure, returning 0.0")
+            return 0.0
+    _scorer = make_scorer(_safe_auc, response_method="predict_proba")
+
     search = RandomizedSearchCV(
         base_model, param_distributions=param_dist,
-        n_iter=n_trials, cv=cv, scoring="f1_macro",
+        n_iter=n_trials, cv=cv, scoring=_scorer,
         n_jobs=1, random_state=42, verbose=0,
+        error_score=0.0,
     )
 
     start = time.time()
     search.fit(X_full, y_full, **fit_params)
     elapsed = time.time() - start
 
-    print(f"✅ {model_name:25s} on {dataset_name:20s}  →  best CV F1: {search.best_score_:.4f}  ({elapsed:.1f}s)")
+    print(f"✅ {model_name:25s} on {dataset_name:20s}  →  best CV ROC-AUC: {search.best_score_:.4f}  ({elapsed:.1f}s)")
     return dataset_name, model_name, search.best_params_
 
 
 def tune_agt2i_layout(dataset_name: str, target_col: str, layout: str, n_trials: int):
     """Tune a single AG‑T2I layout using 3‑fold cross‑validation (like baselines)."""
-    X_full, y_full, _, _ = load_and_prepare_dataset(dataset_name, target_col)
+    X_full, y_full, _, n_classes = load_and_prepare_dataset(dataset_name, target_col)
     cv = StratifiedKFold(n_splits=3, shuffle=True, random_state=42)
     splits = list(cv.split(X_full, y_full))
 
@@ -264,13 +374,17 @@ def tune_agt2i_layout(dataset_name: str, target_col: str, layout: str, n_trials:
                     dataset_name, target_col, layout,
                     trial.number % 1000,
                     train_idx, test_idx,
-                    tabnet_params, cnn_params
+                    tabnet_params, cnn_params, n_classes=n_classes
                 )
-                scores.append(result["test"].get("f1_macro", 0.0))
-            except Exception:
-                # If the fold fails (e.g. too few samples), return a low score
+                auroc = result["test"].get("auroc", 0.0)
+                scores.append(0.0 if (auroc is None or np.isnan(auroc)) else float(auroc))
+            except Exception as exc:
+                print(f"    [trial {trial.number} fold warning] {exc}")
                 scores.append(0.0)
-        return float(np.mean(scores))
+        valid = [s for s in scores if not np.isnan(s) and s > 0.0]
+        if not valid:
+            raise optuna.TrialPruned()
+        return float(np.mean(valid))
 
     completed = len(
         study.get_trials(states=(optuna.trial.TrialState.COMPLETE,))
@@ -341,9 +455,28 @@ if __name__ == "__main__":
         ensure_global_preprocessing(ds_name, ds_target)
         print(f"  ✓ {ds_name}")
 
+    # Which model keys does this invocation need present in best_params?
+    if args.model:
+        requested_keys = list(args.model)
+    else:
+        requested_keys = MODELS + [f"AG-T2I-{l}" for l in AGT2I_LAYOUTS]
+
+    def already_tuned(ds_name):
+        p = OUT_DIR / f"{ds_name}.json"
+        if not p.exists():
+            return False
+        try:
+            with open(p) as f:
+                existing = json.load(f)
+        except (json.JSONDecodeError, OSError):
+            return False
+        return all(k in existing for k in requested_keys)
+
     should_tune = args.fresh or not all(
-        (OUT_DIR / f"{ds_name}.json").exists() for ds_name, _ in datasets_to_run
+        already_tuned(ds_name) for ds_name, _ in datasets_to_run
     )
+    if not should_tune:
+        print(f"✅ best_params already contain {requested_keys} for every dataset – tuning skipped.")
     best_per_dataset = {}
 
     if should_tune:
@@ -397,9 +530,18 @@ if __name__ == "__main__":
         # Save best_params per dataset
         for ds_name, params_dict in best_per_dataset.items():
             json_path = OUT_DIR / f"{ds_name}.json"
+            existing = {}
+            if json_path.exists():
+                try:
+                    with open(json_path) as f:
+                        existing = json.load(f)
+                except (json.JSONDecodeError, OSError):
+                    existing = {}
+            existing.update(params_dict)      # merge; never drop other models
             with open(json_path, "w") as f:
-                json.dump(params_dict, f, indent=4)
-            print(f"Saved best_params/{ds_name}.json")
+                json.dump(existing, f, indent=4)
+            print(f"Saved best_params/{ds_name}.json "
+                  f"({len(params_dict)} updated, {len(existing)} total)")
     else:
         print("✅ Using existing best_params files – tuning skipped.")
 

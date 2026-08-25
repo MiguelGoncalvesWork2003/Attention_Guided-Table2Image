@@ -1,0 +1,122 @@
+{
+    "XGBoost": {
+        "colsample_bytree": 0.8347004662655393,
+        "learning_rate": 0.18022959559673618,
+        "max_depth": 6,
+        "n_estimators": 223,
+        "subsample": 0.7103996728090174
+    },
+    "LightGBM": {
+        "feature_fraction": 0.7529847965068651,
+        "learning_rate": 0.19020103466213772,
+        "n_estimators": 230,
+        "num_leaves": 51,
+        "subsample": 0.8430179407605753
+    },
+    "CatBoost": {
+        "depth": 6,
+        "l2_leaf_reg": 1.185260448662222,
+        "learning_rate": 0.18276027831785724,
+        "n_estimators": 257
+    },
+    "TabNet": {
+        "gamma": 1.482627653632069,
+        "lambda_sparse": 0.0001637074694637572,
+        "n_a": 8,
+        "n_d": 8,
+        "n_steps": 3,
+        "optimizer_params": {
+            "lr": 0.005
+        }
+    },
+    "FT-Transformer (lite)": {
+        "batch_size": 16,
+        "epochs": 80,
+        "lr": 0.0007661100707771367
+    },
+    "IGTD-inspired": {
+        "dropout": 0.16685430556951092,
+        "epochs": 120,
+        "lr": 0.0008341106432362095
+    },
+    "IGTD": {
+        "dropout": 0.16685430556951092,
+        "epochs": 120,
+        "lr": 0.0008341106432362095
+    },
+    "Naive Reshape": {
+        "dropout": 0.16685430556951092,
+        "epochs": 120,
+        "lr": 0.0008341106432362095
+    },
+    "DeepInsight": {
+        "dropout": 0.1154469128110745,
+        "epochs": 120,
+        "lr": 0.0003738105868191798
+    },
+    "AG-T2I-step_row": {
+        "n_steps": 3,
+        "step_dim": 13,
+        "attn_dim": 20,
+        "gamma": 1.4317499546435004,
+        "lambda_sparse": 0.00022005723932587974,
+        "learning_rate": 0.0022264725132067746,
+        "batch_size": 16,
+        "cnn_lr": 0.009515170404153674,
+        "cnn_optimizer": "rmsprop",
+        "cnn_dropout": 0.1940440542886318,
+        "cnn_epochs": 90
+    },
+    "AG-T2I-packed": {
+        "n_steps": 3,
+        "step_dim": 25,
+        "attn_dim": 7,
+        "gamma": 1.245521904659172,
+        "lambda_sparse": 0.00044386502845079206,
+        "learning_rate": 0.008358559969198001,
+        "batch_size": 32,
+        "cnn_lr": 0.009303797344104657,
+        "cnn_optimizer": "adam",
+        "cnn_dropout": 0.14353190504998176,
+        "cnn_epochs": 43
+    },
+    "AG-T2I-packed_T": {
+        "n_steps": 4,
+        "step_dim": 45,
+        "attn_dim": 23,
+        "gamma": 1.8138596309646595,
+        "lambda_sparse": 3.5730220681982963e-06,
+        "learning_rate": 0.004416138672501478,
+        "batch_size": 128,
+        "cnn_lr": 0.008833897186523559,
+        "cnn_optimizer": "rmsprop",
+        "cnn_dropout": 0.10611707800420822,
+        "cnn_epochs": 66
+    },
+    "AG-T2I-step_sparse": {
+        "n_steps": 8,
+        "step_dim": 32,
+        "attn_dim": 33,
+        "gamma": 1.5958140329289914,
+        "lambda_sparse": 0.00015106168539399977,
+        "learning_rate": 0.008404101502441296,
+        "batch_size": 64,
+        "cnn_lr": 0.003871749166917383,
+        "cnn_optimizer": "adam",
+        "cnn_dropout": 0.5521251644394107,
+        "cnn_epochs": 98
+    },
+    "AG-T2I-attention_map": {
+        "n_steps": 7,
+        "step_dim": 60,
+        "attn_dim": 24,
+        "gamma": 1.139887694012367,
+        "lambda_sparse": 0.0003533859135593836,
+        "learning_rate": 0.006350290517148709,
+        "batch_size": 128,
+        "cnn_lr": 0.008836190251914849,
+        "cnn_optimizer": "rmsprop",
+        "cnn_dropout": 0.3971691988687391,
+        "cnn_epochs": 48
+    }
+}

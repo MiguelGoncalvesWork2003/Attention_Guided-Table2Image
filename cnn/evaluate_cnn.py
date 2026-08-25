@@ -53,7 +53,26 @@ from running_all_models.metrics import compute_extended_metrics
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from cnn.cnn_model import TabNetCNN
-from evaluation.metrics import save_metrics_to_json   # still used for saving JSON
+from cnn.cnn_architectures import build_model
+
+
+class _NumpyEncoder(json.JSONEncoder):
+    """Allow json.dump to serialise numpy scalar/array types that
+    compute_extended_metrics / sklearn commonly return (np.float64,
+    np.int64, np.ndarray), without depending on an external helper."""
+    def default(self, obj):
+        if isinstance(obj, np.integer):
+            return int(obj)
+        if isinstance(obj, np.floating):
+            return float(obj)
+        if isinstance(obj, np.ndarray):
+            return obj.tolist()
+        return super().default(obj)
+
+
+def save_metrics_to_json(metrics: dict, path: str) -> None:
+    with open(path, "w") as f:
+        json.dump(metrics, f, indent=2, cls=_NumpyEncoder)
 
 def main():
     """Main evaluation routine."""
@@ -69,8 +88,25 @@ def main():
     PROCESSED_DIR = BASE / "data/processed" / DATASET
 
     # ---- ISOLATION: use OUTPUT_DIR for all file I/O ----
-    TASK_OUTPUT_DIR = Path(os.environ.get("OUTPUT_DIR", str(BASE / "data" / "processed" / DATASET)))
-    TASK_OUTPUT_DIR = TASK_OUTPUT_DIR / f"{LAYOUT}_seed{SEED}"
+    _root = Path(os.environ.get("OUTPUT_DIR", str(BASE / "data" / "processed" / DATASET)))
+    BASE_LAYOUT = os.environ.get("BASE_LAYOUT", "step_row").strip()
+    PERMUTATION_SEED = int(os.environ.get("PERMUTATION_SEED", 0))
+    AM_VARIANT = os.environ.get("AM_VARIANT", "full").strip()
+    if LAYOUT == "shuffled":
+        _tag = f"shuffled-{BASE_LAYOUT}-p{PERMUTATION_SEED}_seed{SEED}"
+    elif LAYOUT == "attention_map" and AM_VARIANT != "full":
+        _tag = f"attention_map-{AM_VARIANT}_seed{SEED}"
+    else:
+        _tag = f"{LAYOUT}_seed{SEED}"
+
+    # E1 (layout transfer): IMAGE_DIR is shared read-only across every
+    # architecture; TASK_OUTPUT_DIR is per-architecture, so results from
+    # different architectures never collide. CNN_ARCH defaults to
+    # "tabnetcnn", matching train_cnn.py, so existing behaviour is unchanged
+    # for any run that doesn't set it.
+    CNN_ARCH = os.environ.get("CNN_ARCH", "tabnetcnn").strip().lower()
+    IMAGE_DIR = _root / _tag
+    TASK_OUTPUT_DIR = IMAGE_DIR / f"arch_{CNN_ARCH}"
     TASK_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     
     # Model paths
@@ -99,9 +135,9 @@ def main():
     # -------------------------
     # LOAD TEST DATA
     # -------------------------
-    # Load test images from the isolated output directory
-    X_test_path = TASK_OUTPUT_DIR / "X_test_img.npy"
-    y_test_path = TASK_OUTPUT_DIR / "y_test.npy"
+    # Load test images from the shared, per-(dataset,layout,seed) directory
+    X_test_path = IMAGE_DIR / "X_test_img.npy"
+    y_test_path = IMAGE_DIR / "y_test.npy"
     
     if not X_test_path.exists():
         raise FileNotFoundError(f"Test images not found at {X_test_path}")
@@ -118,7 +154,8 @@ def main():
         )
     
     # Normalize labels to 0-based indexing
-    y_test = y_test - y_test.min()
+    if y_test.min() < 0:
+        raise ValueError(f"Negative labels in test set: min={y_test.min()}")
     
     print(f"Test set: {X_test.shape[0]} samples")
     print(f"Image shape: {X_test.shape[1:]} (C, H, W)")
@@ -140,12 +177,15 @@ def main():
         n_classes = len(np.unique(y_test))
         model_state = checkpoint
     
-    # Instantiate model
-    model = TabNetCNN(
+    # Instantiate model via the architecture registry (E1: reads which
+    # architecture was actually trained, rather than assuming TabNetCNN)
+    arch = config.get("architecture", "tabnetcnn")
+    model = build_model(
+        arch,
         n_classes=n_classes,
         input_channels=config["image_shape"][0],
         image_height=config["image_shape"][1],
-        image_width=config["image_shape"][2]
+        image_width=config["image_shape"][2],
     )
     
     model.load_state_dict(model_state)
@@ -203,6 +243,8 @@ def main():
     metrics["seed"] = SEED
     metrics["model_path"] = str(MODEL_PATH)
     metrics["image_shape"] = config["image_shape"]
+    metrics["architecture"] = arch
+    metrics["n_parameters"] = config.get("n_parameters")
     
     # -------------------------
     # SAVE RESULTS

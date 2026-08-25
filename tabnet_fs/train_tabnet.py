@@ -182,17 +182,21 @@ class TabNetLearner:
         if torch.cuda.is_available():
             torch.cuda.manual_seed_all(self.config.random_seed)
 
-        # Validation split
-        X_train_fit, X_val, y_train_fit, y_val = train_test_split(
-            X_train,
-            y_train,
+        idx_fit, idx_val = train_test_split(
+            np.arange(len(X_train)),
             test_size=0.2,
             random_state=self.config.random_seed,
             stratify=y_train
         )
+        X_train_fit, X_val = X_train[idx_fit], X_train[idx_val]
+        y_train_fit, y_val = y_train[idx_fit], y_train[idx_val]
+
+        np.save(self.output_dir / "cnn_train_idx.npy", idx_fit)
+        np.save(self.output_dir / "cnn_val_idx.npy", idx_val)
 
         print(f"Training split: {X_train_fit.shape[0]}")
         print(f"Validation split: {X_val.shape[0]}")
+        print(f"Split indices saved to {self.output_dir}")
 
         model = self.create_model()
 

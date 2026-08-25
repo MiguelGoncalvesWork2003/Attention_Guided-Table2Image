@@ -30,7 +30,8 @@ def compute_extended_metrics(y_true, y_pred, y_proba=None):
     }
     if y_proba is not None:
         try:
-            n_classes = len(np.unique(y_true))
+            n_classes = (y_proba.shape[1] if getattr(y_proba, "ndim", 1) == 2
+                else len(np.unique(y_true)))
             if n_classes == 2:
                 # Binary: use the probability of the positive class
                 if y_proba.ndim == 2 and y_proba.shape[1] == 2:
@@ -39,12 +40,13 @@ def compute_extended_metrics(y_true, y_pred, y_proba=None):
                     y_score = y_proba
                 metrics["roc_auc"] = roc_auc_score(y_true, y_score)
             else:
-                # Multiclass: one‑vs‑rest
-                metrics["roc_auc"] = roc_auc_score(
-                    y_true, y_proba, multi_class="ovr", average="macro"
+                    metrics["roc_auc"] = roc_auc_score(
+                    y_true, y_proba, multi_class="ovr", average="macro",
+                    labels=list(range(y_proba.shape[1]))
                 )
-        except Exception:
-            metrics["roc_auc"] = np.nan
+        except Exception as exc:
+            metrics["roc_auc"] = None
+            metrics["roc_auc_error"] = str(exc)
     return metrics
 
 

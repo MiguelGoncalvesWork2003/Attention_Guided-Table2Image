@@ -1,4 +1,6 @@
 """
+*** NOT USED FOR ANY RESULT REPORTED IN THE THESIS — SEE WARNING BELOW ***
+
 Benchmark script that compares tree ensembles, tabular deep models, and the
 attention‑guided TabNet→CNN pipeline (AG‑T2I) across multiple datasets.
 
@@ -9,6 +11,25 @@ evaluation for AG‑T2I by passing the fold indices to the pipeline API
 Extended metrics (balanced accuracy, precision, recall, F1, ROC‑AUC) are
 computed for both train and test sets.  Misclassified samples and ROC
 probability data are saved for further inspection.
+
+--------------------------------------------------------------------------
+AUDIT WARNING (do not remove without reading): this script is an earlier,
+sequential predecessor to running_all_models/benchmark_parallel.py. It is
+NOT listed in Appendix A.9's project directory structure (only
+benchmark_parallel.py is), and its SEEDS = [0, 1, 2, 3, 4] (five seeds)
+directly contradicts Section 5.5's explicit protocol: "model training and
+evaluation are repeated with three fixed seeds (0, 1, 2)". It also drives
+everything through api.py's SimplePipelineAPI rather than the direct
+subprocess/caching orchestration in benchmark_parallel.py, so its
+preprocessing and caching behaviour has not been cross-checked against
+Chapter 6's numbers and should be assumed to differ.
+
+Running this file instead of benchmark_parallel.py would silently produce
+results computed under a different, undocumented protocol. Recommend either
+deleting this file or moving it to an archive/ directory before submission,
+so nobody inspecting the repository mistakes it for the script that
+produced the reported results.
+--------------------------------------------------------------------------
 """
 
 import pandas as pd
@@ -122,7 +143,7 @@ def run_dataset_benchmark(dataset_name, target_col):
 
                     # Determine whether this model uses scaled or raw data
                     model_needs_scaling = model_name in [
-                        "FT-Transformer (lite)", "IGTD-inspired", "Naive Reshape", "TabNet"
+                        "FT-Transformer (lite)", "MDS-layout", "Naive Reshape", "TabNet"
                     ]
 
                     X_train_model = X_train_scaled if model_needs_scaling else X_train_raw.values

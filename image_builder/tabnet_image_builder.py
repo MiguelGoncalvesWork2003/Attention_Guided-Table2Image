@@ -60,11 +60,29 @@ DATASET = os.environ.get("DATASET", "BreastCancer")
 MOL_LAYOUT = os.environ.get("MOL_LAYOUT", "step_row").strip()
 SEED = int(os.environ.get("SEED", 42))
 
+# Permutation control (E2): which layout to wrap, and which permutation.
+BASE_LAYOUT = os.environ.get("BASE_LAYOUT", "step_row").strip()
+PERMUTATION_SEED = int(os.environ.get("PERMUTATION_SEED", 0))
+
+# AGT2I-AM decomposition (E3, Section 6.7.3): which ablation control to run.
+AM_VARIANT = os.environ.get("AM_VARIANT", "full").strip()
+
+
+def layout_tag() -> str:
+    """Directory suffix. Must match train_cnn.py and evaluate_cnn.py exactly,
+    otherwise the CNN stage will not find the images."""
+    if MOL_LAYOUT == "shuffled":
+        return f"shuffled-{BASE_LAYOUT}-p{PERMUTATION_SEED}_seed{SEED}"
+    if MOL_LAYOUT == "attention_map" and AM_VARIANT != "full":
+        return f"attention_map-{AM_VARIANT}_seed{SEED}"
+    return f"{MOL_LAYOUT}_seed{SEED}"
+
+
 PROCESSED_DIR = Path(os.environ.get("PROCESSED_DIR", str(BASE / "data" / "processed" / DATASET)))
 
 # ---- ISOLATION: respect OUTPUT_DIR for parallel safety ----
 OUTPUT_DIR = Path(os.environ.get("OUTPUT_DIR", str(PROCESSED_DIR)))
-OUTPUT_DIR = OUTPUT_DIR / f"{MOL_LAYOUT}_seed{SEED}"
+OUTPUT_DIR = OUTPUT_DIR / layout_tag()
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 TABNET_OUT = (
@@ -78,8 +96,7 @@ print(f"Dataset: {DATASET}")
 print(f"Layout: {MOL_LAYOUT}")
 
 TABNET_FS_DIR = BASE / "tabnet_fs"
-
-sys.path.insert(0, str(TABNET_FS_DIR))
+sys.path.insert(0, str(BASE))
 
 from tabnet_fs.layouts.unified_layouts import (
     create_layout_from_config,
@@ -118,16 +135,43 @@ feature_names = np.load(
 ).tolist()
 
 # =============================================================================
-# Create validation split from the original training set
+# Reuse the exact split on which TabNet was trained and the attention
+# statistics computed.  Reconstructing it here would work only by
+# coincidence (same function, same seed, same data); reading the persisted
+# indices makes the guarantee of Section 4.5.2 explicit.
 # =============================================================================
 VAL_SPLIT = 0.2   # fraction of original training data used for validation
 
-X_train, X_val, y_train, y_val = train_test_split(
-    X_train_full, y_train_full,
-    test_size=VAL_SPLIT,
-    stratify=y_train_full,
-    random_state=SEED
-)
+idx_dir = os.environ.get("TABNET_IDX_DIR")
+idx_dir = Path(idx_dir) if idx_dir else TABNET_OUT
+idx_train_path = idx_dir / "cnn_train_idx.npy"
+idx_val_path   = idx_dir / "cnn_val_idx.npy"
+
+if idx_train_path.exists() and idx_val_path.exists():
+    idx_fit = np.load(idx_train_path)
+    idx_val = np.load(idx_val_path)
+    if idx_fit.max() >= len(X_train_full) or idx_val.max() >= len(X_train_full):
+        raise ValueError(
+            f"Persisted split indices exceed the training set size "
+            f"({len(X_train_full)}). Re-run train_tabnet.py for this fold."
+        )
+    X_train, X_val = X_train_full[idx_fit], X_train_full[idx_val]
+    y_train, y_val = y_train_full[idx_fit], y_train_full[idx_val]
+    print(f"Reused TabNet split from {idx_train_path.parent}")
+else:
+    # Indices not yet written (e.g. during HPO where train_tabnet.py and
+    # tabnet_image_builder.py run in the same pipeline call).
+    # Reconstruct with the same function, seed and data — result is identical.
+    from sklearn.model_selection import train_test_split as _tts
+    idx_all = np.arange(len(X_train_full))
+    idx_fit, idx_val = _tts(
+        idx_all, test_size=VAL_SPLIT,
+        stratify=y_train_full, random_state=SEED
+    )
+    X_train, X_val = X_train_full[idx_fit], X_train_full[idx_val]
+    y_train, y_val = y_train_full[idx_fit], y_train_full[idx_val]
+    print(f"Split indices not found – reconstructed (seed={SEED}, "
+          f"test_size={VAL_SPLIT}). This is expected during HPO.")
 
 print(f"Original train shape: {X_train_full.shape}")
 print(f"After split: train={X_train.shape}, val={X_val.shape}, test={X_test.shape}")
@@ -146,7 +190,9 @@ step_df = pd.read_csv(step_csv_path)
 
 print(f"Loaded step assignment ({len(step_df)} features)")
 
-IMPORTANCE_CUTOFF = 0.005
+# E4 (threshold sensitivity, Section 4.3.3): configurable via env var,
+# defaulting to the value used everywhere else in the thesis.
+IMPORTANCE_CUTOFF = float(os.environ.get("IMPORTANCE_CUTOFF", "0.005"))
 
 if MOL_LAYOUT == "attention_map":
     print("Attention map layout: keeping all features (no importance cutoff)")
@@ -167,10 +213,23 @@ feature_to_idx: Dict[str, int] = {
     for idx, feature in enumerate(feature_names)
 }
 
-layout = create_layout_from_config(
-    MOL_LAYOUT,
-    step_df
-)
+_layout_kwargs = {}
+if MOL_LAYOUT == "shuffled":
+    _layout_kwargs = {"base_layout": BASE_LAYOUT,
+                      "permutation_seed": PERMUTATION_SEED}
+    print(f"Permutation control: wrapping '{BASE_LAYOUT}', "
+          f"permutation seed {PERMUTATION_SEED}")
+elif MOL_LAYOUT == "attention_map":
+    _layout_kwargs = {"variant": AM_VARIANT}
+    if AM_VARIANT != "full":
+        print(f"AM decomposition control: variant='{AM_VARIANT}'")
+
+layout = create_layout_from_config(MOL_LAYOUT, step_df, **_layout_kwargs)
+
+# Packed layouts only implement map_feature_by_name; map_feature returns
+# (0, 0).  When ShuffledLayout wraps one of them, routing must follow the
+# BASE layout, not the wrapper's own name.
+EFFECTIVE_NAME = getattr(layout, "base_name", layout.name)
 
 channels, height, width = layout.compute_image_shape()
 
@@ -190,6 +249,17 @@ def build_layout_images(
 
     if layout.name == "attention_map":
         weight_matrix = layout.get_weight_matrix()
+        skip_norm = getattr(layout, "skip_normalization", False)
+
+        if skip_norm:
+            # AM-noNorm (E3): no percentile clip on the input, no [0,1]
+            # rescale on the output. Pixel values stay on the standardised
+            # scale, matching every other layout.
+            raw = np.empty((n_samples, height, width), dtype=np.float32)
+            for i in range(n_samples):
+                raw[i] = weight_matrix * X[i].astype(np.float32)
+            images[:, 0] = raw
+            return images
 
         if build_layout_images.is_training:
             build_layout_images.q01 = np.percentile(X, 1, axis=0)
@@ -221,14 +291,20 @@ def build_layout_images(
 
         return images
 
-    if layout.name in ("packed", "packed_T"):
-        ordered_features = list(step_df["feature"])
-        for feature_name in ordered_features:
-            feature_key = str(feature_name)
-            if feature_key not in feature_to_idx:
+    # Under the permutation control the coordinate still belongs to
+    # feature_name, but the VALUE written there comes from another feature.
+    def _source_of(feature_name):
+        if hasattr(layout, "resolve_content"):
+            return layout.resolve_content(feature_name)
+        return feature_name
+
+    if EFFECTIVE_NAME in ("packed", "packed_T"):
+        for feature_name in list(step_df["feature"]):
+            source_key = str(_source_of(feature_name))
+            if source_key not in feature_to_idx:
                 missing += 1
                 continue
-            feature_idx = feature_to_idx[feature_key]
+            feature_idx = feature_to_idx[source_key]
             row, col = layout.map_feature_by_name(feature_name)
             if row >= height or col >= width:
                 continue
@@ -238,15 +314,12 @@ def build_layout_images(
     else:
         for step, features in layout.step_groups.items():
             for local_rank, feature_name in enumerate(features):
-                feature_key = str(feature_name)
-                if feature_key not in feature_to_idx:
+                source_key = str(_source_of(feature_name))
+                if source_key not in feature_to_idx:
                     missing += 1
                     continue
-                feature_idx = feature_to_idx[feature_key]
-                row, col = layout.map_feature(
-                    step,
-                    local_rank
-                )
+                feature_idx = feature_to_idx[source_key]
+                row, col = layout.map_feature(step, local_rank)
                 if row >= height or col >= width:
                     continue
                 images[:, 0, row, col] = X[:, feature_idx]
@@ -293,6 +366,9 @@ np.save(OUTPUT_DIR / "y_val.npy", y_val)
 np.save(OUTPUT_DIR / "y_test.npy", y_test)     # re‑saved for consistency
 
 # ---- Layout metadata ----
+_probe = X_train_img[:min(200, len(X_train_img)), 0]
+occupied = int((_probe != 0).any(axis=0).sum())
+
 layout_metadata = {
     "dataset": DATASET,
     "layout_name": MOL_LAYOUT,
@@ -304,12 +380,26 @@ layout_metadata = {
     "step_groups": layout.step_groups,
     "feature_order": list(step_df["feature"]),
     "importance_cutoff": IMPORTANCE_CUTOFF,
-    "generation_timestamp": pd.Timestamp.now().isoformat(),
+    "generation_timestamp": pd.Timestamp.now().isoformat(),    
     "validation_split": VAL_SPLIT,
-    "random_seed": SEED
+    "random_seed": SEED,
+    "base_layout": BASE_LAYOUT if MOL_LAYOUT == "shuffled" else None,
+    "permutation_seed": PERMUTATION_SEED if MOL_LAYOUT == "shuffled" else None,
+    "am_variant": AM_VARIANT if MOL_LAYOUT == "attention_map" else None,
+    # --- geometry, for Table 6.1 ---
+    "n_features_total":    int(len(feature_names)),
+    "n_features_retained": int(len(step_df)),
+    "retention_rate":      round(len(step_df) / len(feature_names), 4),
+    "total_pixels":        int(height * width),
+    "occupied_pixels":     occupied,
+    "sparsity":            round(1 - occupied / (height * width), 4),
+    "degenerate_1d":       bool(height == 1 or width == 1),
+    "cnn_capacity_bucket": ("small"  if height * width <= 16
+                            else "medium" if height * width <= 100
+                            else "large"),
 }
 
-metadata_path = OUTPUT_DIR / f"tabnet_layout_{MOL_LAYOUT}.json"
+metadata_path = OUTPUT_DIR / f"tabnet_layout_{layout_tag()}.json"
 
 with open(metadata_path, "w", encoding="utf-8") as f:
     json.dump(layout_metadata, f, indent=2, default=str)

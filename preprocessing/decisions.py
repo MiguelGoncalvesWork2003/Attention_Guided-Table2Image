@@ -131,9 +131,24 @@ def build_preprocessing_config_from_env() -> PreprocessingConfig:
     features_to_remove = [f.strip() for f in features_to_remove_str.split(",") 
                          if f.strip()] if features_to_remove_str else []
     
-    # Map environment variables to configuration
-    cat_missing = os.environ.get("CAT_MISSING", "Treat as category")
-    categorical_strategy = "explicit" if cat_missing == "Treat as category" else "drop"
+    # Map environment variables to configuration.
+    # AUDIT FIX: accept both the internal short codes ("explicit"/"drop", used
+    # by every headless caller and by app.py itself, which already translates
+    # the UI label before setting the env var) and the raw Streamlit UI label
+    # ("Treat as category"/"Drop categorical columns"), so this is correct
+    # regardless of which caller set the variable. The previous version only
+    # matched the UI label, which no real caller ever actually sends — every
+    # headless run silently got categorical_missing_strategy="drop" (which
+    # SmartImputer.transform() implements as removing the categorical
+    # column(s) entirely, not just imputing missing values) regardless of
+    # what was requested.
+    cat_missing_raw = os.environ.get("CAT_MISSING", "explicit")
+    if cat_missing_raw in ("explicit", "drop"):
+        categorical_strategy = cat_missing_raw
+    else:
+        categorical_strategy = (
+            "explicit" if cat_missing_raw == "Treat as category" else "drop"
+        )
     
     # Build configuration
     config = PreprocessingConfig(

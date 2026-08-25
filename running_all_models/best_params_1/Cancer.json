@@ -1,0 +1,22 @@
+{
+    "XGBoost": {
+        "colsample_bytree": 0.749816047538945,
+        "learning_rate": 0.17254716573280354,
+        "max_depth": 5,
+        "n_estimators": 171,
+        "subsample": 0.8394633936788146
+    },
+    "AG-T2I-attention_map": {
+        "n_steps": 10,
+        "step_dim": 6,
+        "attn_dim": 59,
+        "gamma": 1.0016531165800553,
+        "lambda_sparse": 3.8014326839544175e-06,
+        "learning_rate": 0.01737001740261427,
+        "batch_size": 32,
+        "cnn_lr": 0.0003359483751119741,
+        "cnn_optimizer": "rmsprop",
+        "cnn_dropout": 0.5336922685725898,
+        "cnn_epochs": 85
+    }
+}

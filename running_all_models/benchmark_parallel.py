@@ -65,23 +65,25 @@ SEEDS = [0, 1, 2]
 CACHE_DIR = PROJECT_ROOT / "cache"
 CACHE_DIR.mkdir(exist_ok=True, parents=True)
 
+# The 13 benchmarks of Table 5.1. Kept identical to the DATASETS list in
+# hyperparameter_search.py — this constant only matters when this script is
+# invoked directly (e.g. `python benchmark_parallel.py --agt2i`), since
+# hyperparameter_search.py's own __main__ passes (dataset, target) pairs
+# explicitly and never reads this list.
 DATASETS = [
-    ("Iris", "Class"),
-    #("Diabetes", "Class"),
-    #("Cancer", "Class"),
-    #("Glass", "Class"),
-    #("Card", "Class"),
-    #("Thyroid", "Class"),
-    #("Heart", "Class"),
-    #("Horse", "Class"),
-    #("Gene", "Class"),
-    #("Soybean", "Class"),
-    #("Adult", "Class"),
-    #("Bank", "Class"),
-    #("Electricity", "Class"),
-    #("Magic04", "Class"),
-    #("Poker_Hand", "Class"),
-    #("Forest_Cover_Type", "Class"),
+    ("Cancer", "Class"),
+    ("Card", "Class"),
+    ("Diabetes", "Class"),
+    ("Electricity", "Class"),
+    ("Gene", "Class"),
+    ("Glass", "Class"),
+    ("Heart", "Class"),
+    ("Horse", "Class"),
+    ("Magic04", "Class"),
+    ("Soybean", "Class"),
+    ("Thyroid", "Class"),
+    ("Poker_Hand", "Class"),
+    ("Forest_Cover_Type", "Class"),
 ]
 
 # ------------------------------------------------------------
@@ -127,6 +129,29 @@ def _cached_preprocessing(dataset, seed, fold, X_train_raw, X_test_raw):
             scaler = StandardScaler()
             X_train = scaler.fit_transform(X_train_imp)
             X_test  = scaler.transform(X_test_imp)
+            cache_train.parent.mkdir(parents=True, exist_ok=True)
+            np.save(cache_train, X_train)
+            np.save(cache_test, X_test)
+    return X_train, X_test
+
+
+def _cached_imputation_only(dataset, seed, fold, X_train_raw, X_test_raw):
+    """Median-impute only, no scaling — for tree-based baselines, per
+    Section 5.2: "Tree-based baselines receive the imputed and encoded data
+    without scaling." Separate cache namespace from _cached_preprocessing so
+    the two never collide or get mixed up."""
+    cache_train = _cache_path(dataset, seed, fold, "X_train_imputed_only.npy")
+    cache_test  = _cache_path(dataset, seed, fold, "X_test_imputed_only.npy")
+    lock = FileLock(str(cache_train) + ".lock")
+
+    with lock:
+        if cache_train.exists() and cache_test.exists():
+            X_train = np.load(cache_train)
+            X_test  = np.load(cache_test)
+        else:
+            imputer = SimpleImputer(strategy='median')
+            X_train = imputer.fit_transform(X_train_raw)
+            X_test  = imputer.transform(X_test_raw)
             cache_train.parent.mkdir(parents=True, exist_ok=True)
             np.save(cache_train, X_train)
             np.save(cache_test, X_test)
@@ -179,11 +204,17 @@ def ensure_global_preprocessing(dataset_name, target_col):
 # AG‑T2I helper with caching + tuned hyperparameters
 # ------------------------------------------------------------
 def run_agt2i_fold(dataset, target, layout, seed, train_idx, test_idx,
-                   tabnet_params=None, cnn_params=None):
+                   tabnet_params=None, cnn_params=None, n_classes=None):
     """
     Execute the pipeline for one AG‑T2I layout.
     Preprocessing + TabNet training are cached per (fold, tabnet_params).
     Only image building + CNN training are repeated for each layout.
+
+    n_classes, when given, is the class count of the FULL dataset (not just
+    this fold's model-fitting subset) and is exported as N_CLASSES so that
+    train_cnn.py / evaluate_cnn.py build the output layer at the correct
+    width even if a rare class is absent from this specific fold's 80%
+    model-fitting split (see train_cnn.py's N_CLASSES handling).
     """
     base = PROJECT_ROOT
     fold_str = _fold_id(dataset, seed, train_idx, test_idx, tabnet_params)
@@ -208,6 +239,10 @@ def run_agt2i_fold(dataset, target, layout, seed, train_idx, test_idx,
         "FORMAT_STEP_DISTRIBUTION": "true",
         "OPTIMIZATION_METRIC": "accuracy",
     }
+    if n_classes:
+        # Full-dataset class count, so the CNN's output layer width does not
+        # depend on which classes happen to appear in this fold's subsets.
+        env["N_CLASSES"] = str(n_classes)
     device = get_torch_device()
     if device == 'cuda':
         env["CUDA_VISIBLE_DEVICES"] = "0"
@@ -399,6 +434,7 @@ def run_agt2i_fold(dataset, target, layout, seed, train_idx, test_idx,
 
     # ---- Image building ----
     env["TABNET_STEP_CSV_PATH"] = str(fold_cache_dir / "tabnet_output" / "tabnet_step_assignment.csv")
+    env["TABNET_IDX_DIR"] = str(fold_cache_dir / "tabnet_output")
     success, _, _ = run_step(
         name="Image Building",
         script_path=base / "image_builder" / "tabnet_image_builder.py",
@@ -426,7 +462,12 @@ def run_agt2i_fold(dataset, target, layout, seed, train_idx, test_idx,
         raise RuntimeError(f"CNN evaluation failed for layout {layout}")
 
     # ---- Collect results from the subdirectory created by train_cnn / evaluate_cnn ----
-    eval_subdir = output_dir / f"{layout}_seed{seed}"
+    # train_cnn.py / evaluate_cnn.py write into IMAGE_DIR/arch_{CNN_ARCH}/, not
+    # directly into IMAGE_DIR (see today's E1 change to both scripts). This
+    # function never sets CNN_ARCH in `env`, so it always resolves to the
+    # same "tabnetcnn" default those two scripts themselves fall back to.
+    cnn_arch = env.get("CNN_ARCH", "tabnetcnn")
+    eval_subdir = output_dir / f"{layout}_seed{seed}" / f"arch_{cnn_arch}"
 
     # First try JSON files (preferred)
     results_file = eval_subdir / f"cnn_evaluation_results_{layout}.json"
@@ -450,7 +491,6 @@ def run_agt2i_fold(dataset, target, layout, seed, train_idx, test_idx,
             y_test = np.load(y_test_path)
             y_pred = np.load(y_pred_path)
             y_prob = np.load(y_prob_path) if y_prob_path.exists() else None
-            y_test = y_test - y_test.min()
             test_metrics = compute_extended_metrics(y_test, y_pred, y_prob)
 
     return {
@@ -517,17 +557,32 @@ def run_model_on_fold(model_name, model_obj, dataset_name, target_col, seed, fol
             if model_obj is None:
                 raise ValueError(f"Model object is None for baseline {model_name}")
 
-            # IGTD does not need scaling (its mapper does min‑max internally)
+            # Section 5.2: standardisation applies uniformly to every neural
+            # model, INCLUDING IGTD and DeepInsight ("This applies uniformly
+            # to TabNet, FTT-lite, the MLP, and every image-based method,
+            # including IGTD and DeepInsight"). MLP, IGTD ("IGTD", i.e. the
+            # real_igtd mode) and DeepInsight were previously missing from
+            # this list and received raw, unimputed, unscaled features —
+            # this list must mirror hyperparameter_search.py's NEURAL_MODELS
+            # set exactly, or the two stages tune and evaluate under
+            # different preprocessing.
             model_needs_scaling = model_name in [
-                "FT-Transformer (lite)", "IGTD-inspired", "Naive Reshape", "TabNet"
+                "FT-Transformer (lite)", "MDS-layout", "Naive Reshape",
+                "TabNet", "MLP", "IGTD", "DeepInsight",
             ]
             if model_needs_scaling:
                 X_train, X_test = _cached_preprocessing(
                     dataset_name, seed, fold, X_train_raw, X_test_raw
                 )
             else:
-                X_train = X_train_raw.values
-                X_test  = X_test_raw.values
+                # Tree ensembles (XGBoost/LightGBM/CatBoost/Random Forest):
+                # Section 5.2 says imputation applies to every method, and
+                # only scaling is skipped for trees ("Tree-based baselines
+                # receive the imputed and encoded data without scaling").
+                # Median-impute here without standardising.
+                X_train, X_test = _cached_imputation_only(
+                    dataset_name, seed, fold, X_train_raw, X_test_raw
+                )
 
             _move_model_to_device(model_obj)
 
@@ -535,9 +590,25 @@ def run_model_on_fold(model_name, model_obj, dataset_name, target_col, seed, fol
             if model_name == "TabNet":
                 if len(y_train_fold) < 2:
                     raise ValueError("Training set too small for TabNet (batch norm requires >1 sample)")
+                # Internal 80/20 split of the TRAINING fold for early
+                # stopping (Section 5.5, item 4). The test fold must never
+                # be used here — eval_set previously pointed at (X_test,
+                # y_test_fold), which made the final model weights (pytorch-
+                # tabnet restores the best-eval_set-epoch checkpoint) depend
+                # directly on test-set performance. random_state fixed at 42
+                # to match the internal-split convention used elsewhere in
+                # this codebase (T2I_CNN.fit, FTTransformerWrapper.fit).
+                from sklearn.model_selection import train_test_split as _tts
+                idx_all = np.arange(len(X_train))
+                try:
+                    idx_fit, idx_val = _tts(
+                        idx_all, test_size=0.2, stratify=y_train_fold, random_state=42
+                    )
+                except ValueError:
+                    idx_fit, idx_val = _tts(idx_all, test_size=0.2, random_state=42)
                 model_obj.fit(
-                    X_train, y_train_fold,
-                    eval_set=[(X_test, y_test_fold)],
+                    X_train[idx_fit], y_train_fold[idx_fit],
+                    eval_set=[(X_train[idx_val], y_train_fold[idx_val])],
                     eval_metric=["accuracy"],
                     max_epochs=200, patience=20,
                     batch_size=16, virtual_batch_size=8,
@@ -606,7 +677,7 @@ def run_model_on_fold(model_name, model_obj, dataset_name, target_col, seed, fol
             start_t = time.time()
             result = run_agt2i_fold(
                 dataset_name, target_col, layout, seed, train_idx, test_idx,
-                tabnet_params, cnn_params
+                tabnet_params, cnn_params, n_classes=len(le_classes)
             )
             elapsed = time.time() - start_t
             for subset in ["train", "test"]:

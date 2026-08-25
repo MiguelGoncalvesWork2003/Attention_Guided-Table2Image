@@ -46,7 +46,22 @@ def main():
     print(f"Dataset: {dataset_name}")
 
     raw_path = base_dir / "data" / "raw" / f"{dataset_name}.csv"
-    processed_dir = base_dir / "data" / "processed" / dataset_name
+
+    # AUDIT FIX: every caller of this script (benchmark_parallel.py,
+    # hyperparameter_search.py) sets PROCESSED_DIR specifically to isolate
+    # one fold/seed/layout's preprocessing output from every other
+    # concurrently-running fold. This script previously ignored that
+    # variable entirely and always wrote to the shared, dataset-level
+    # data/processed/{DATASET}/ directory — meaning every fold's
+    # preprocessing step would race to write the SAME file path under
+    # Parallel(n_jobs=-1), and the guard check in run_agt2i_fold that reads
+    # back from the isolated tmp_dir immediately afterward would find
+    # nothing there. Mirrors the same override pattern already used by
+    # train_tabnet.py's load_data().
+    processed_env = os.environ.get("PROCESSED_DIR")
+    processed_dir = Path(processed_env) if processed_env else (
+        base_dir / "data" / "processed" / dataset_name
+    )
     artifacts_dir = processed_dir / "artifacts"
 
     # Create directories
