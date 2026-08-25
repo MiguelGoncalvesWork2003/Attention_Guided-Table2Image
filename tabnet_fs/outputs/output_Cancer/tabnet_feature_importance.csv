@@ -1,0 +1,10 @@
+feature,importance
+Clump Thickness,0.18983816419110908
+Uniformity of Cell Size,0.1678017223942357
+Uniformity of Cell Shape,0.08002165310076836
+Marginal Adhesion,0.16006418267579275
+Single Epithelial Cell Size,0.1092183029952719
+Bare Nuclei,0.1898643242181257
+Bland Chromatin,0.06044131143724876
+Normal Nucleoli,0.022611838919060264
+Mitosis,0.02013850006838747

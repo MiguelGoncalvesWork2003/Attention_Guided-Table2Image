@@ -1,0 +1,16 @@
+{
+  "dataset": "Iris",
+  "target_column": "Class",
+  "n_steps": 10,
+  "n_d": 12,
+  "n_a": 16,
+  "gamma": 1.6935280118427438,
+  "lambda_sparse": 0.00029033744264983556,
+  "mask_type": "sparsemax",
+  "learning_rate": 0.00513875036378194,
+  "batch_size": 32,
+  "max_epochs": 100,
+  "patience": 20,
+  "assignment_source": "mask_based",
+  "timestamp": "2026-07-21T16:22:40.975336"
+}

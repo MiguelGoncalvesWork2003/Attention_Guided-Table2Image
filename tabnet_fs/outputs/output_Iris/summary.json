@@ -1,0 +1,12 @@
+{
+  "dataset": "Iris",
+  "target": "Class",
+  "n_features": 5,
+  "steps_used": 5,
+  "n_steps_configured": 10,
+  "test_accuracy": 0.9,
+  "train_accuracy": 0.9083333333333333,
+  "has_step_masks": true,
+  "step_assignment_source": "mask_based",
+  "timestamp": "2026-07-21T16:22:40.978541"
+}

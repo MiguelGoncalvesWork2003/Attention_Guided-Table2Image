@@ -1,0 +1,12 @@
+{
+  "dataset": "Gene",
+  "target": "Class",
+  "n_features": 120,
+  "steps_used": 6,
+  "n_steps_configured": 6,
+  "test_accuracy": 0.9213011542497377,
+  "train_accuracy": 0.9315931593159316,
+  "has_step_masks": true,
+  "step_assignment_source": "mask_based",
+  "timestamp": "2026-07-21T15:26:05.447048"
+}

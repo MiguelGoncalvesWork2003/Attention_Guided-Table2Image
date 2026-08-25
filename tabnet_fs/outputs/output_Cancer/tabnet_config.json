@@ -1,0 +1,16 @@
+{
+  "dataset": "Cancer",
+  "target_column": "Class",
+  "n_steps": 6,
+  "n_d": 8,
+  "n_a": 8,
+  "gamma": 1.5,
+  "lambda_sparse": 0.0001,
+  "mask_type": "sparsemax",
+  "learning_rate": 0.02,
+  "batch_size": 32,
+  "max_epochs": 100,
+  "patience": 20,
+  "assignment_source": "mask_based",
+  "timestamp": "2026-08-20T14:52:50.183813"
+}

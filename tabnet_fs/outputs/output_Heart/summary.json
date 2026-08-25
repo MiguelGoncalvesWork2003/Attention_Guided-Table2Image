@@ -1,0 +1,12 @@
+{
+  "dataset": "Heart",
+  "target": "Class",
+  "n_features": 35,
+  "steps_used": 6,
+  "n_steps_configured": 6,
+  "test_accuracy": 0.8152173913043478,
+  "train_accuracy": 0.8229813664596274,
+  "has_step_masks": true,
+  "step_assignment_source": "mask_based",
+  "timestamp": "2026-07-21T15:31:36.051332"
+}

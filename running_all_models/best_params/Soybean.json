@@ -1,0 +1,12 @@
+{
+    "TabNet": {
+        "gamma": 1.4744427686266666,
+        "lambda_sparse": 0.0008536189862866829,
+        "n_a": 16,
+        "n_d": 16,
+        "n_steps": 3,
+        "optimizer_params": {
+            "lr": 0.01
+        }
+    }
+}

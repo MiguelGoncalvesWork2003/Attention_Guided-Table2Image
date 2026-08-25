@@ -1,0 +1,12 @@
+{
+  "dataset": "Cancer",
+  "target": "Class",
+  "n_features": 9,
+  "steps_used": 6,
+  "n_steps_configured": 6,
+  "test_accuracy": 0.9570815450643777,
+  "train_accuracy": 0.9635193133047211,
+  "has_step_masks": true,
+  "step_assignment_source": "mask_based",
+  "timestamp": "2026-08-20T14:52:50.187353"
+}
