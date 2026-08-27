@@ -40,7 +40,11 @@ from running_all_models.benchmark_parallel import load_agt2i_params
 
 # The four datasets spanning the dimensionality range of the suite
 # (Diabetes F=8, Heart F=35, Soybean F=82, Gene F=120), per sec:e4_design.
-DEFAULT_DATASETS = ["Diabetes", "Heart", "Soybean", "Gene"]
+# Soybean excluded for the same reason as in run_e3_am_decomposition.py:
+# 19 classes over ~137 test instances per fold makes macro-AUC undefined.
+# This leaves Diabetes (F=8), Heart (F=35) and Gene (F=120), which still
+# span the dimensionality range this sweep is meant to probe.
+DEFAULT_DATASETS = ["Diabetes", "Heart", "Gene"]
 THETAS = [0.0, 0.001, 0.005, 0.01, 0.02]
 LAYOUT = "step_row"  # the representative layout for this sweep
 
@@ -170,7 +174,11 @@ def run_one_theta(dataset_name, target_col, theta, seed, tabnet_out,
     # metadata JSON (tabnet_layout_{layout}_seed{seed}.json), not from the
     # CNN stages -- read it here since it's the other half of Table 6.threshold.
     n_features_retained = None
-    metadata_path = output_dir / f"tabnet_layout_{LAYOUT}_seed{seed}.json"
+    # tabnet_image_builder.py writes to OUTPUT_DIR/{layout_tag}/, so the
+    # metadata sits one directory deeper than this originally looked --
+    # which is why every |F'| came back None.
+    metadata_path = (output_dir / f"{LAYOUT}_seed{seed}"
+                     / f"tabnet_layout_{LAYOUT}_seed{seed}.json")
     if metadata_path.exists():
         with open(metadata_path) as f:
             n_features_retained = json.load(f).get("n_features_retained")
@@ -213,7 +221,17 @@ def run_one_theta(dataset_name, target_col, theta, seed, tabnet_out,
 
 
 def already_done(dataset_name, seed):
-    return (RESULTS_DIR / f"{dataset_name}_s{seed}.json").exists()
+    """True only if a previous run genuinely succeeded on every condition, so
+    a partial or failed run can be retried rather than permanently skipped."""
+    p = RESULTS_DIR / f"{dataset_name}_s{seed}.json"
+    if not p.exists():
+        return False
+    try:
+        with open(p) as f:
+            entries = json.load(f).get("thetas", {})
+        return bool(entries) and all(r.get("status") == "ok" for r in entries.values())
+    except (json.JSONDecodeError, OSError):
+        return False
 
 
 def save_results(dataset_name, seed, per_theta):

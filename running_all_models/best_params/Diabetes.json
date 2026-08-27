@@ -8,5 +8,18 @@
         "optimizer_params": {
             "lr": 0.02
         }
+    },
+    "AG-T2I-step_row": {
+        "n_steps": 2,
+        "step_dim": 17,
+        "attn_dim": 26,
+        "gamma": 1.9877783088820695,
+        "lambda_sparse": 0.00010717387537047635,
+        "learning_rate": 0.09151855958337063,
+        "batch_size": 16,
+        "cnn_lr": 0.009908059282031222,
+        "cnn_optimizer": "rmsprop",
+        "cnn_dropout": 0.45544111414947724,
+        "cnn_epochs": 43
     }
 }

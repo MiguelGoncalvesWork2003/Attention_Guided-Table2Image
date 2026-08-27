@@ -44,7 +44,11 @@ from running_all_models.hyperparameter_search import (
 )
 from running_all_models.benchmark_parallel import load_agt2i_params
 
-DEFAULT_DATASETS = ["Cancer", "Card", "Gene", "Heart", "Soybean", "Thyroid"]
+# Soybean is excluded: with 19 classes over ~137 test instances per fold,
+# some classes go unrepresented and macro-averaged ROC-AUC is undefined,
+# which returned NaN for all four variants. Pass it explicitly with
+# --datasets if that is ever resolved.
+DEFAULT_DATASETS = ["Cancer", "Card", "Gene", "Heart", "Thyroid"]
 VARIANTS = ["full", "flat", "1row", "nonorm"]
 
 CACHE_DIR = PROJECT_ROOT / "cache" / "e3_am_decomposition"
@@ -207,7 +211,17 @@ def run_one_variant(dataset_name, target_col, variant, seed, tabnet_out,
 
 
 def already_done(dataset_name, seed):
-    return (RESULTS_DIR / f"{dataset_name}_s{seed}.json").exists()
+    """True only if a previous run genuinely succeeded on every condition, so
+    a partial or failed run can be retried rather than permanently skipped."""
+    p = RESULTS_DIR / f"{dataset_name}_s{seed}.json"
+    if not p.exists():
+        return False
+    try:
+        with open(p) as f:
+            entries = json.load(f).get("variants", {})
+        return bool(entries) and all(r.get("status") == "ok" for r in entries.values())
+    except (json.JSONDecodeError, OSError):
+        return False
 
 
 def save_results(dataset_name, seed, per_variant):

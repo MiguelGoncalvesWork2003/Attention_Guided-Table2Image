@@ -1,0 +1,67 @@
+{
+    "AG-T2I-step_row": {
+        "n_steps": 3,
+        "step_dim": 48,
+        "attn_dim": 13,
+        "gamma": 1.5271381533427812,
+        "lambda_sparse": 2.2130779014732625e-06,
+        "learning_rate": 0.001589316310459913,
+        "batch_size": 16,
+        "cnn_lr": 0.0012153531068068528,
+        "cnn_optimizer": "rmsprop",
+        "cnn_dropout": 0.18643120795736035,
+        "cnn_epochs": 80
+    },
+    "AG-T2I-step_sparse": {
+        "n_steps": 6,
+        "step_dim": 36,
+        "attn_dim": 7,
+        "gamma": 1.009416576431698,
+        "lambda_sparse": 1.1044292586882668e-06,
+        "learning_rate": 0.002063112370880058,
+        "batch_size": 16,
+        "cnn_lr": 0.003163233525820408,
+        "cnn_optimizer": "rmsprop",
+        "cnn_dropout": 0.30568704287826,
+        "cnn_epochs": 47
+    },
+    "AG-T2I-packed": {
+        "n_steps": 3,
+        "step_dim": 5,
+        "attn_dim": 46,
+        "gamma": 1.967467693919603,
+        "lambda_sparse": 5.4373287521730426e-05,
+        "learning_rate": 0.0016689464656614698,
+        "batch_size": 32,
+        "cnn_lr": 0.0006796602674053124,
+        "cnn_optimizer": "adam",
+        "cnn_dropout": 0.4090842969705323,
+        "cnn_epochs": 44
+    },
+    "AG-T2I-packed_T": {
+        "n_steps": 2,
+        "step_dim": 21,
+        "attn_dim": 4,
+        "gamma": 1.007480172805399,
+        "lambda_sparse": 0.00010143063977272794,
+        "learning_rate": 0.0019397722874951535,
+        "batch_size": 128,
+        "cnn_lr": 0.00907019016154532,
+        "cnn_optimizer": "rmsprop",
+        "cnn_dropout": 0.1049883908515077,
+        "cnn_epochs": 98
+    },
+    "AG-T2I-attention_map": {
+        "n_steps": 4,
+        "step_dim": 45,
+        "attn_dim": 4,
+        "gamma": 1.185288771558462,
+        "lambda_sparse": 7.907027662339183e-06,
+        "learning_rate": 0.0013765567489631343,
+        "batch_size": 16,
+        "cnn_lr": 0.003945860618677618,
+        "cnn_optimizer": "rmsprop",
+        "cnn_dropout": 0.3519116763161235,
+        "cnn_epochs": 77
+    }
+}

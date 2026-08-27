@@ -8,5 +8,70 @@
         "optimizer_params": {
             "lr": 0.02
         }
+    },
+    "AG-T2I-step_row": {
+        "n_steps": 7,
+        "step_dim": 10,
+        "attn_dim": 8,
+        "gamma": 2.028722462053466,
+        "lambda_sparse": 0.000439320789197737,
+        "learning_rate": 0.0058432296161564905,
+        "batch_size": 16,
+        "cnn_lr": 0.005028920735991938,
+        "cnn_optimizer": "rmsprop",
+        "cnn_dropout": 0.10296701919924864,
+        "cnn_epochs": 90
+    },
+    "AG-T2I-step_sparse": {
+        "n_steps": 2,
+        "step_dim": 25,
+        "attn_dim": 25,
+        "gamma": 1.9935709009859137,
+        "lambda_sparse": 3.204135695920801e-06,
+        "learning_rate": 0.003654705128978477,
+        "batch_size": 64,
+        "cnn_lr": 0.0034810288282575096,
+        "cnn_optimizer": "adam",
+        "cnn_dropout": 0.10384697566954776,
+        "cnn_epochs": 34
+    },
+    "AG-T2I-packed": {
+        "n_steps": 10,
+        "step_dim": 15,
+        "attn_dim": 8,
+        "gamma": 2.0560221048257312,
+        "lambda_sparse": 3.836393221789292e-06,
+        "learning_rate": 0.004363093798328995,
+        "batch_size": 128,
+        "cnn_lr": 0.00939533846941494,
+        "cnn_optimizer": "adam",
+        "cnn_dropout": 0.19335684288343946,
+        "cnn_epochs": 69
+    },
+    "AG-T2I-packed_T": {
+        "n_steps": 6,
+        "step_dim": 27,
+        "attn_dim": 47,
+        "gamma": 1.2459063978245584,
+        "lambda_sparse": 0.00010784246284775507,
+        "learning_rate": 0.02456664636982069,
+        "batch_size": 32,
+        "cnn_lr": 0.0035682259911104636,
+        "cnn_optimizer": "rmsprop",
+        "cnn_dropout": 0.5030290202066445,
+        "cnn_epochs": 97
+    },
+    "AG-T2I-attention_map": {
+        "n_steps": 4,
+        "step_dim": 6,
+        "attn_dim": 51,
+        "gamma": 1.0033693012271154,
+        "lambda_sparse": 2.4423419505506652e-06,
+        "learning_rate": 0.0020136304128309953,
+        "batch_size": 16,
+        "cnn_lr": 0.006241675814422299,
+        "cnn_optimizer": "rmsprop",
+        "cnn_dropout": 0.31414235327910633,
+        "cnn_epochs": 77
     }
 }

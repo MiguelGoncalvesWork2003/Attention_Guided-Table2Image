@@ -218,8 +218,17 @@ def run_one_combination(dataset_name, target_col, base_layout, permutation_seed,
 
 
 def already_done(dataset_name, base_layout, permutation_seed, seed, fold):
+    """True only if a previous run genuinely SUCCEEDED. A file recording a
+    skip or failure must not block a retry -- otherwise a missing
+    best_params file at first run permanently poisons that combination."""
     summary_path = RESULTS_DIR / f"{dataset_name}_{base_layout}_p{permutation_seed}_s{seed}f{fold}.json"
-    return summary_path.exists()
+    if not summary_path.exists():
+        return False
+    try:
+        with open(summary_path) as f:
+            return json.load(f).get("status") == "ok"
+    except (json.JSONDecodeError, OSError):
+        return False
 
 
 def save_result(dataset_name, base_layout, permutation_seed, seed, fold, result):

@@ -47,19 +47,19 @@ from running_all_models.models_factory import get_models
 # "still running" — see HPO_SUBSAMPLE_SIZE below before attempting these two.
 # Iris is not part of the 13-dataset suite (Table 5.1) and must stay out.
 DATASETS = [
-    #("Cancer", "Class"),
-    #("Card", "Class"),
-    #("Diabetes", "Class"),
+    ("Cancer", "Class"),
+    ("Card", "Class"),
+    ("Diabetes", "Class"),
     ("Electricity", "Class"),
     ("Gene", "Class"),
-    #("Glass", "Class"),
-    #("Heart", "Class"),
-    #("Horse", "Class"),
+    ("Glass", "Class"),
+    ("Heart", "Class"),
+    ("Horse", "Class"),
     ("Magic04", "Class"),
-    #("Soybean", "Class"),
-    #("Thyroid", "Class"),
-    #("Poker_Hand", "Class"),
-    #("Forest_Cover_Type", "Class"),
+    ("Soybean", "Class"),
+    ("Thyroid", "Class"),
+    ("Poker_Hand", "Class"),
+    ("Forest_Cover_Type", "Class"),
 ]
 
 # Datasets large enough that the 3-fold inner HPO loop (baselines:
@@ -71,7 +71,7 @@ DATASETS = [
 # HPO_SUBSAMPLE_SIZE env var), then replace [SUBSAMPLE SIZE] in Section 5.5
 # with the same number. The final benchmark (run_dataset_benchmark) always
 # trains on the complete outer training fold regardless of this setting.
-HPO_SUBSAMPLE_DATASETS = {"Poker_Hand", "Forest_Cover_Type"}
+HPO_SUBSAMPLE_DATASETS = {"Poker_Hand"}#, "Forest_Cover_Type"}
 HPO_SUBSAMPLE_SIZE = int(os.environ.get("HPO_SUBSAMPLE_SIZE", "20000"))
 
 MODELS = [
@@ -95,14 +95,14 @@ TRIALS = {
     "Random Forest": 25,
     "MLP": 25,
     "TabNet": 15,
-    "FT-Transformer (lite)": 20,
+    "FT-Transformer (lite)": 15,
     "MDS-layout": 25,
-    "IGTD": 15,
+    "IGTD": 10,
     "Naive Reshape": 25,
     "DeepInsight": 25,     
 }
 
-AGT2I_TRIALS = 25
+AGT2I_TRIALS = 15
 AGT2I_LAYOUTS = ["step_row", "packed", "packed_T", "step_sparse", "attention_map"]
 
 OUT_DIR = Path(__file__).parent / "best_params"

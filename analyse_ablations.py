@@ -280,18 +280,65 @@ def load_e2_results():
     return pd.DataFrame(rows)
 
 
+def _candidate_result_dirs():
+    """Both locations the benchmark may write to: results/ when
+    benchmark_parallel.py is driven directly, results_hyperparameter/ when
+    driven via hyperparameter_search.py (which sets RESULTS_DIR)."""
+    return [RUNNING_MODELS / "results", RUNNING_MODELS / "results_hyperparameter"]
+
+
+def _parse_summary_tex(path: Path, model_name: str, metric: str):
+    """Parse a *_summary.tex row: 'model & metric & mean & std & ci95 & time \\\\'.
+    Returns the mean, or None if that (model, metric) pair isn't present."""
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    for line in text.splitlines():
+        if "&" not in line:
+            continue
+        parts = [p.strip() for p in line.replace("\\\\", "").split("&")]
+        if len(parts) >= 3 and parts[0] == model_name and parts[1] == metric:
+            try:
+                return float(parts[2])
+            except ValueError:
+                return None
+    return None
+
+
+def load_benchmark_value(dataset, model_name, metric="roc_auc"):
+    """The main benchmark's aggregate score for one (dataset, model).
+
+    Used as the comparator in both E2 (ordered vs permuted) and E6
+    (independently-tuned vs shared backbone). Searches _raw.csv first
+    (per-fold rows, averaged here) then _summary.tex (already aggregated),
+    across both possible output directories.
+    """
+    for d in _candidate_result_dirs():
+        raw_path = d / f"{dataset}_raw.csv"
+        if raw_path.exists():
+            try:
+                df = pd.read_csv(raw_path)
+                sub = df[(df["model"] == model_name) & (df.get("subset", "test") == "test")]
+                if not sub.empty and metric in sub.columns:
+                    val = pd.to_numeric(sub[metric], errors="coerce").mean()
+                    if pd.notna(val):
+                        return float(val)
+            except Exception:
+                pass
+
+    for d in _candidate_result_dirs():
+        tex_path = d / f"{dataset}_summary.tex"
+        if tex_path.exists():
+            val = _parse_summary_tex(tex_path, model_name, metric)
+            if val is not None:
+                return val
+    return None
+
+
 def load_ordered_value(dataset, base_layout, metric="roc_auc"):
-    """The 'ordered' comparator: the main benchmark's already-computed
-    AG-T2I-{base_layout} aggregate score for this dataset, from the same
-    *_raw.csv files statistical_tests.py reads."""
-    raw_path = RUNNING_MODELS / "results" / f"{dataset}_raw.csv"
-    if not raw_path.exists():
-        return None
-    df = pd.read_csv(raw_path)
-    df = df[(df["model"] == f"AG-T2I-{base_layout}") & (df["subset"] == "test")]
-    if df.empty or metric not in df.columns:
-        return None
-    return float(pd.to_numeric(df[metric], errors="coerce").mean())
+    """E2's 'ordered' comparator: the main benchmark's AG-T2I-{layout} score."""
+    return load_benchmark_value(dataset, f"AG-T2I-{base_layout}", metric)
 
 
 def analyse_e2():
@@ -352,61 +399,87 @@ def analyse_e2():
 # E3 — AM decomposition (Table 6.7)
 # =====================================================================
 
-def load_e3_result(dataset, variant, seed=0):
-    """variant in {'full','flat','1row','nonorm'}."""
-    tag = ("attention_map_seed" if variant == "full"
-           else f"attention_map-{variant}_seed")
-    results_path = (
-        PROJECT_ROOT / "data" / "processed" / dataset / f"{tag}{seed}"
-        / "arch_tabnetcnn" / "cnn_evaluation_results_attention_map.json"
-    )
-    if not results_path.exists():
-        return None
-    with open(results_path) as f:
-        return json.load(f)
+def load_e3_results():
+    """Read the E3 orchestrator's own output. An earlier version of this
+    function globbed data/processed/... , which is where a MANUAL E3 loop
+    would have written; run_e3_am_decomposition.py writes here instead, so
+    every variant except 'full' silently came back as None."""
+    e3_dir = RUNNING_MODELS / "results" / "e3_am_decomposition"
+    rows = []
+    if not e3_dir.exists():
+        return pd.DataFrame(rows)
+    for p in sorted(e3_dir.glob("*.json")):
+        try:
+            with open(p) as f:
+                d = json.load(f)
+        except (json.JSONDecodeError, OSError):
+            continue
+        for variant, result in d.get("variants", {}).items():
+            if result.get("status") != "ok":
+                continue
+            auc = result.get("roc_auc")
+            # A run can report status "ok" and still carry a NaN metric (e.g.
+            # Soybean: 19 classes over ~137 test instances per fold leaves
+            # classes unrepresented, so macro-AUC is undefined). Those rows
+            # are dropped here rather than surfacing as an all-"--" table row.
+            if auc is None or (isinstance(auc, float) and auc != auc):
+                continue
+            rows.append({
+                "dataset": d["dataset"], "seed": d.get("seed", 0),
+                "variant": variant,
+                "roc_auc": auc,
+                "f1_macro": result.get("f1_macro"),
+            })
+    return pd.DataFrame(rows)
 
 
-def analyse_e3(datasets):
+def analyse_e3(datasets=None):
     print("\n" + "=" * 70)
     print("E3 — AGT2I-AM DECOMPOSITION (Table 6.7)")
     print("=" * 70)
 
-    variants = ["full", "flat", "1row", "nonorm"]
-    rows = []
-    any_found = False
-    for ds in datasets:
-        row = {"dataset": ds}
-        for v in variants:
-            r = load_e3_result(ds, v)
-            row[f"{v}_auc"] = r.get("roc_auc") if r else None
-            row[f"{v}_f1"] = r.get("f1_macro") if r else None
-            if r:
-                any_found = True
-        rows.append(row)
-
-    if not any_found:
-        print("No E3 results found yet. Run each variant with, e.g.:\n"
-              "  MOL_LAYOUT=attention_map AM_VARIANT=flat python "
-              "image_builder/tabnet_image_builder.py  (then train_cnn.py, "
-              "evaluate_cnn.py)")
+    df = load_e3_results()
+    if df.empty:
+        print(f"No E3 results found yet in "
+              f"{RUNNING_MODELS / 'results' / 'e3_am_decomposition'}")
         return
 
-    summary = pd.DataFrame(rows)
+    variants = ["full", "flat", "1row", "nonorm"]
+    auc = df.pivot_table(index="dataset", columns="variant", values="roc_auc")
+    f1 = df.pivot_table(index="dataset", columns="variant", values="f1_macro")
+    auc = auc.reindex(columns=[v for v in variants if v in auc.columns])
+    f1 = f1.reindex(columns=[v for v in variants if v in f1.columns])
+
     print("\nMacro-AUC by variant:")
-    print(summary[["dataset"] + [f"{v}_auc" for v in variants]].round(4).to_string(index=False))
+    print(auc.round(4).to_string(na_rep="--"))
     print("\nMacro-F1 by variant:")
-    print(summary[["dataset"] + [f"{v}_f1" for v in variants]].round(4).to_string(index=False))
+    print(f1.round(4).to_string(na_rep="--"))
 
-    print("\nMean deltas vs full (positive = full is better):")
-    for v in variants[1:]:
-        auc_delta = (summary["full_auc"] - summary[f"{v}_auc"]).mean()
-        f1_delta = (summary["full_f1"] - summary[f"{v}_f1"]).mean()
-        print(f"  full - {v:8s}: AUC delta = {auc_delta:+.4f}   F1 delta = {f1_delta:+.4f}")
+    if "full" in auc.columns:
+        print("\nMean deltas vs full (positive = removing the factor HURTS, "
+              "i.e. the factor helps):")
+        for v in variants[1:]:
+            if v not in auc.columns:
+                continue
+            pair = auc[["full", v]].dropna()
+            if pair.empty:
+                print(f"  full - {v:8s}: no dataset has both")
+                continue
+            d_auc = (pair["full"] - pair[v]).mean()
+            fpair = f1[["full", v]].dropna() if v in f1.columns else pd.DataFrame()
+            d_f1 = (fpair["full"] - fpair[v]).mean() if not fpair.empty else float("nan")
+            print(f"  full - {v:8s}: AUC {d_auc:+.4f}   F1 {d_f1:+.4f}   "
+                  f"(n={len(pair)})")
 
-    tex_path = RUNNING_MODELS / "results" / "table_6_7_am_decomposition.tex"
-    with open(tex_path, "w") as f:
-        f.write(summary.round(4).to_latex(index=False, na_rep="--"))
-    print(f"\nLaTeX table written to: {tex_path}")
+    print(f"\nDatasets included: {', '.join(sorted(df['dataset'].unique()))}. "
+          f"Any dataset whose macro-AUC was undefined (e.g. Soybean) is "
+          f"excluded at load time and does not appear above.")
+
+    out = RUNNING_MODELS / "results" / "table_6_7_am_decomposition.tex"
+    combined = auc.round(4)
+    with open(out, "w") as f:
+        f.write(combined.to_latex(na_rep="--"))
+    print(f"\nLaTeX table written to: {out}")
 
 
 # =====================================================================
@@ -420,13 +493,18 @@ def load_e4_results():
         with open(p) as f:
             d = json.load(f)
         for theta_str, result in d.get("thetas", {}).items():
-            if result.get("status") == "ok":
-                rows.append({
-                    "dataset": d["dataset"], "seed": d["seed"],
-                    "theta": float(theta_str),
-                    "n_features_retained": result.get("n_features_retained"),
-                    "roc_auc": result.get("roc_auc"),
-                })
+            if result.get("status") != "ok":
+                continue
+            auc = result.get("roc_auc")
+            # Same NaN guard as in load_e3_results (see comment there).
+            if auc is None or (isinstance(auc, float) and auc != auc):
+                continue
+            rows.append({
+                "dataset": d["dataset"], "seed": d["seed"],
+                "theta": float(theta_str),
+                "n_features_retained": result.get("n_features_retained"),
+                "roc_auc": auc,
+            })
     return pd.DataFrame(rows)
 
 
@@ -450,7 +528,21 @@ def analyse_e4():
     print(pivot_f.to_string())
 
     tex_path = RUNNING_MODELS / "results" / "table_threshold_sensitivity.tex"
-    combined = pivot_auc.round(4).astype(str) + " | " + pivot_f.astype("Int64").astype(str)
+    # Build the "AUC | |F'|" cells as plain Python strings. The previous
+    # version added a str-dtype frame to an Int64 frame, which raises under
+    # pandas' pyarrow backend ("operation 'add' not supported for dtype
+    # 'str'") -- and crashed before E6 could run at all.
+    def _cell(ds, th):
+        a = pivot_auc.loc[ds, th] if (ds in pivot_auc.index and th in pivot_auc.columns) else None
+        n = pivot_f.loc[ds, th] if (ds in pivot_f.index and th in pivot_f.columns) else None
+        a_s = f"{a:.4f}" if pd.notna(a) else "--"
+        n_s = f"{int(n)}" if pd.notna(n) else "--"
+        return f"{a_s} | {n_s}"
+
+    combined = pd.DataFrame(
+        {th: [_cell(ds, th) for ds in pivot_auc.index] for th in pivot_auc.columns},
+        index=pivot_auc.index,
+    )
     with open(tex_path, "w") as f:
         f.write(combined.to_latex(na_rep="--"))
     print(f"\nLaTeX table written to: {tex_path}")
@@ -478,7 +570,14 @@ def load_e6_results():
 def load_independent_backbone_value(dataset, layout, metric="roc_auc"):
     """The main benchmark's per-layout score, where each layout's backbone
     was independently tuned (the condition E6 is contrasted against)."""
-    return load_ordered_value(dataset, layout, metric)  # same lookup as E2's "ordered"
+    return load_benchmark_value(dataset, f"AG-T2I-{layout}", metric)
+
+
+E6_LAYOUT_ORDER = ["step_row", "step_sparse", "packed", "packed_T", "attention_map"]
+E6_LAYOUT_LABELS = {
+    "step_row": "AGT2I-SR", "step_sparse": "AGT2I-SS", "packed": "AGT2I-PR",
+    "packed_T": "AGT2I-PC", "attention_map": "AGT2I-AM",
+}
 
 
 def analyse_e6():
@@ -492,43 +591,75 @@ def analyse_e6():
               f"{RUNNING_MODELS / 'results' / 'e6_shared_backbone'}")
         return
 
-    print("\nPer (dataset, seed, fold): spread across the 5 layouts, "
-          "shared backbone vs independently-tuned backbone")
+    # ---- Per-layout comparison, averaged across whatever folds/seeds exist ----
+    shared = df.groupby("layout")["roc_auc"].mean()
+    layouts = [l for l in E6_LAYOUT_ORDER if l in shared.index]
+
+    independent = {}
+    for layout in layouts:
+        vals = [load_independent_backbone_value(ds, layout)
+                for ds in df["dataset"].unique()]
+        vals = [v for v in vals if v is not None]
+        independent[layout] = float(np.mean(vals)) if vals else None
+
+    comparison = pd.DataFrame({
+        "Shared backbone": [shared.get(l) for l in layouts],
+        "Independent backbone": [independent.get(l) for l in layouts],
+    }, index=[E6_LAYOUT_LABELS.get(l, l) for l in layouts]).T
+
+    print("\nMacro-AUC per layout (mean across datasets) [TABLE 6.11]:")
+    print(comparison.round(4).to_string(na_rep="--"))
+
+    n_missing = sum(1 for l in layouts if independent.get(l) is None)
+    if n_missing:
+        print(f"\n[!] {n_missing}/{len(layouts)} layouts have no main-benchmark "
+              f"comparator. Checked for {{dataset}}_raw.csv and "
+              f"{{dataset}}_summary.tex in:")
+        for d in _candidate_result_dirs():
+            print(f"      {d}")
+        print("    Without these, only the shared-backbone row is meaningful.")
+
+    shared_vals = [v for v in comparison.loc["Shared backbone"] if pd.notna(v)]
+    indep_vals = [v for v in comparison.loc["Independent backbone"] if pd.notna(v)]
+    spread_shared = max(shared_vals) - min(shared_vals) if len(shared_vals) >= 2 else None
+    spread_indep = max(indep_vals) - min(indep_vals) if len(indep_vals) >= 2 else None
+
+    if spread_shared is not None:
+        print(f"\nSpread across layouts (max - min):")
+        print(f"  Shared backbone      : {spread_shared:.4f}")
+        if spread_indep is not None:
+            print(f"  Independent backbone : {spread_indep:.4f}")
+            if spread_shared < spread_indep:
+                print("  -> Spread NARROWS under a shared backbone: part of the "
+                      "apparent\n     difference between layouts in the main benchmark "
+                      "is attributable\n     to backbone variation, not spatial "
+                      "organisation alone.")
+            else:
+                print("  -> Spread does NOT narrow: the differences between layouts "
+                      "are not\n     primarily attributable to backbone variation.")
+        else:
+            print("  Independent backbone : unavailable (see note above)")
+
+    # ---- Per-(dataset, seed, fold) spread detail ----
     rows = []
     for (dataset, seed, fold), grp in df.groupby(["dataset", "seed", "fold"]):
-        shared_spread = grp["roc_auc"].max() - grp["roc_auc"].min()
-        independent_vals = [
-            load_independent_backbone_value(dataset, layout)
-            for layout in grp["layout"]
-        ]
-        independent_vals = [v for v in independent_vals if v is not None]
-        independent_spread = (
-            max(independent_vals) - min(independent_vals)
-            if len(independent_vals) >= 2 else None
-        )
+        s_spread = grp["roc_auc"].max() - grp["roc_auc"].min()
+        i_vals = [load_independent_backbone_value(dataset, l) for l in grp["layout"]]
+        i_vals = [v for v in i_vals if v is not None]
         rows.append({
             "dataset": dataset, "seed": seed, "fold": fold,
-            "shared_spread": shared_spread,
-            "independent_spread": independent_spread,
+            "shared_spread": s_spread,
+            "independent_spread": (max(i_vals) - min(i_vals)) if len(i_vals) >= 2 else None,
         })
+    detail = pd.DataFrame(rows)
+    print("\nPer (dataset, seed, fold):")
+    print(detail.round(4).to_string(index=False, na_rep="--"))
 
-    summary = pd.DataFrame(rows)
-    print(summary.round(4).to_string(index=False))
-
-    valid = summary.dropna(subset=["independent_spread"])
-    if len(valid) >= 1:
-        narrower = (valid["shared_spread"] < valid["independent_spread"]).sum()
-        print(f"\nShared-backbone spread narrower than independently-tuned "
-              f"spread in {narrower}/{len(valid)} (dataset, seed, fold) "
-              f"combinations.")
-        print("A consistently narrower spread under a shared backbone "
-              "supports attributing part of the layouts' apparent "
-              "differences to backbone variation rather than geometry alone.")
-
-    tex_path = RUNNING_MODELS / "results" / "table_e6_shared_backbone.tex"
-    with open(tex_path, "w") as f:
-        f.write(summary.round(4).to_latex(index=False, na_rep="--"))
-    print(f"\nLaTeX table written to: {tex_path}")
+    out_dir = RUNNING_MODELS / "results"
+    with open(out_dir / "table_e6_shared_backbone.tex", "w") as f:
+        f.write(comparison.round(4).to_latex(na_rep="--"))
+    detail.to_csv(out_dir / "e6_spread_detail.csv", index=False)
+    print(f"\nLaTeX table written to: {out_dir / 'table_e6_shared_backbone.tex'}")
 
 
 # =====================================================================
@@ -549,7 +680,7 @@ def main():
     if args.only in (None, "e2"):
         analyse_e2()
     if args.only in (None, "e3"):
-        analyse_e3(args.datasets)
+        analyse_e3()
     if args.only in (None, "e4"):
         analyse_e4()
     if args.only in (None, "e6"):

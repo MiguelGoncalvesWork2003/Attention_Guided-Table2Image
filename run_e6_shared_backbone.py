@@ -313,8 +313,17 @@ def run_one_layout(dataset_name, target_col, layout, seed, fold, train_idx, test
 
 
 def already_done(dataset_name, seed, fold):
+    """True only if a previous run genuinely succeeded on every layout, so a
+    partial or failed run can be retried rather than permanently skipped."""
     summary_path = RESULTS_DIR / f"{dataset_name}_s{seed}f{fold}.json"
-    return summary_path.exists()
+    if not summary_path.exists():
+        return False
+    try:
+        with open(summary_path) as f:
+            layouts = json.load(f).get("layouts", {})
+        return bool(layouts) and all(r.get("status") == "ok" for r in layouts.values())
+    except (json.JSONDecodeError, OSError):
+        return False
 
 
 def save_results(dataset_name, seed, fold, per_layout_results):

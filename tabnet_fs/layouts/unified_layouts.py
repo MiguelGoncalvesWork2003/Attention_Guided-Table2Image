@@ -166,6 +166,14 @@ class ShuffledLayout(BaseLayoutStrategy):
     def map_feature(self, s, r):       return self._base.map_feature(s, r)
     def resolve_content(self, f):      return self.content_map.get(f, f)
 
+    def map_feature_by_name(self, feature_name):
+        """Packed layouts (packed / packed_T) are name-based: they only
+        implement map_feature_by_name, and base_name above routes the image
+        builder here for them. Without this delegation every packed
+        permutation dies with AttributeError, which is exactly what happened
+        to all 30 packed combinations in E2."""
+        return self._base.map_feature_by_name(feature_name)
+
 class PackedLayout(BaseLayoutStrategy):
     name = "packed"
     description = "Dense packing: ..."
